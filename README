@@ -1,0 +1,12 @@
+A simple MQTT server
+
+Final program for the UNIX programming in C class at MFF
+UK during winter semester 23/24.
+
+========================================================
+
+build with `make`
+
+========================================================
+
+Author: Jan Doskočil
