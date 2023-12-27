@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 typedef struct {
-	uintmax_t port;
+	char *port;
 } args;
 
 #endif
