@@ -27,7 +27,7 @@
 		type data[];                                                                  \
 	} vectype
 
-#define vec_init(vector, reserve)                                                                  \
+#define vec_init(vec, reserve)                                                                     \
 	/* Initialize a vector and allocate space for 'reserve' items.                             \
 	 *                                                                                         \
 	 * @param vector Pointer to user's pointer to the vector.                                  \
@@ -36,19 +36,19 @@
 	 * failure.                                                                                \
 	 */                                                                                        \
 	do {                                                                                       \
-		const size_t membsize = sizeof((*vector)->data[0]);                                \
+		const size_t membsize = sizeof((*vec)->data[0]);                                   \
 		if (reserve < 1) {                                                                 \
-			*vector = NULL;                                                            \
+			*vec = NULL;                                                               \
 			break;                                                                     \
 		}                                                                                  \
-		*vector = malloc(sizeof(**vector) + reserve * membsize);                           \
-		if (*vector == NULL)                                                               \
+		*vec = malloc(sizeof(**vec) + reserve * membsize);                                 \
+		if (*vec == NULL)                                                                  \
 			break;                                                                     \
-		(*vector)->capacity = reserve;                                                     \
-		(*vector)->nmemb = 0;                                                              \
+		(*vec)->capacity = reserve;                                                        \
+		(*vec)->nmemb = 0;                                                                 \
 	} while (0)
 
-#define vec_append(vector, item, error)                                                         \
+#define vec_append(vec, item, error)                                                            \
 	/* Append an item to the vector.                                                        \
 	 *                                                                                      \
 	 * May move the vector to a different memory address.                                   \
@@ -58,17 +58,18 @@
 	 * @param error Pointer to a boolean signifying error.                                  \
 	 */                                                                                     \
 	do {                                                                                    \
-		const size_t membsize = sizeof((*vector)->data[0]);                             \
-		if ((*vector)->nmemb == (*vector)->capacity) {                                  \
-			(*vector)->capacity *= 2;                                               \
-			if (realloc(*vector, sizeof(**vector) + (*vector)->capacity * membsize) \
-			    == NULL) {                                                          \
+		const size_t membsize = sizeof((*vec)->data[0]);                                \
+		if ((*vec)->nmemb == (*vec)->capacity) {                                        \
+			(*vec)->capacity *= 2;                                                  \
+			void *tmp = realloc(*vec, sizeof(**vec) + (*vec)->capacity * membsize); \
+			if (tmp == NULL) {                                                      \
 				*error = true;                                                  \
 				break;                                                          \
 			}                                                                       \
+			*vec = tmp;                                                             \
 		}                                                                               \
-		(*vector)->data[(*vector)->nmemb] = item;                                       \
-		++(*vector)->nmemb;                                                             \
+		(*vec)->data[(*vec)->nmemb] = item;                                             \
+		++(*vec)->nmemb;                                                                \
 		*error = false;                                                                 \
 	} while (0)
 
