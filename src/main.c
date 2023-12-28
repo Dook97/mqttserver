@@ -20,7 +20,8 @@ static int parse_args(int argc, char **argv, args *out) {
 			if (*endptr != '\0')
 				goto err;
 			if (port > UINT16_MAX || port < 1) {
-				fprintf(stderr, "A port number must be in range 1-%d\n", UINT16_MAX);
+				fprintf(stderr, "A port number must be in range 1-%d\n",
+					UINT16_MAX);
 				goto err;
 			}
 			out->port = optarg;
@@ -40,17 +41,21 @@ err:
 	return 1;
 }
 
-int bind_socket(const char *port, int *err_out) {
-	int sock = -1;
-
+static int_vec *bind_sockets(const char *port, int *err_out) {
 	struct addrinfo *res = NULL;
 	struct addrinfo hints = {
 		.ai_family = AF_UNSPEC, // both IPv4 and IPv6 are allowed
-		.ai_socktype = SOCK_STREAM,
 		.ai_protocol = 6, // TCP
 		.ai_flags = AI_PASSIVE | // use a wildcard IP address
 			    AI_NUMERICSERV, // use a port number instead of service name
 	};
+
+	int_vec *sockets;
+	vec_init(&sockets, 2);
+	if (sockets == NULL) {
+		*err_out = NO_MEMORY;
+		goto err;
+	}
 
 	int err = getaddrinfo(NULL, port, &hints, &res);
 	if (err) {
@@ -60,25 +65,49 @@ int bind_socket(const char *port, int *err_out) {
 	}
 
 	for (struct addrinfo *addr = res; addr != NULL; addr = addr->ai_next) {
-		sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+		int sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 		if (sock == -1)
 			continue;
 
-		if (bind(sock, addr->ai_addr, addr->ai_addrlen) == 0)
-			break; // success
+#ifdef DEBUG
+		char stripaddr[4096];
+		char strport[4096];
+		getnameinfo(addr->ai_addr, addr->ai_addrlen, stripaddr, sizeof(stripaddr), strport,
+			    sizeof(strport), NI_NUMERICHOST | NI_NUMERICSERV);
+		dprintf(addr->ai_family == AF_INET6 ? "attempting to bind [%s]:%s\n"
+						    : "attempting to bind %s:%s\n",
+			stripaddr, strport);
+#endif
+
+		if (bind(sock, addr->ai_addr, addr->ai_addrlen) == 0) {
+			bool error = false;
+			vec_append(&sockets, sock, &error);
+			if (error) {
+				*err_out = NO_MEMORY;
+				goto err;
+			}
+#ifdef DEBUG
+			dprintf(GREEN("SUCCESS:") " sockets[%zu] = %d\n", sockets->nmemb - 1, sock);
+#endif
+			continue;
+		}
+
+#ifdef DEBUG
+#include <errno.h>
+		dprintf(RED("FAILURE: ") "%s\n", strerror(errno));
+#endif
 
 		close(sock);
-		sock = -1;
 	}
-	if (sock == -1)
+	if (sockets->nmemb == 0)
 		*err_out = NO_SOCKET;
 
 err:
 	freeaddrinfo(res);
-	return sock;
+	return sockets;
 }
 
-void handle_MQTT_client(int sock) {
+static void handle_MQTT_client(int sock) {
 	int connection_fd = accept(sock, NULL, NULL);
 	for (int c; read(connection_fd, &c, 1) == 1;) {
 		write(1, &c, 1);
@@ -86,19 +115,22 @@ void handle_MQTT_client(int sock) {
 }
 
 int main(int argc, char **argv) {
-	args args = { .port = MQTT_DEFAULT_PORT };
+#ifdef DEBUG
+	fprintf(stderr, RED(">>> YOU ARE RUNNING A DEBUG BUILD OF THE PROGRAM <<<\n\n"));
+#endif
+
+	args args = {.port = MQTT_DEFAULT_PORT};
 	if (parse_args(argc, argv, &args) != 0)
 		errx(USER_ERR, "Failed to parse commandline arguments");
 
-	int sock = 0, errn = 0;
-	if ((sock = bind_socket(args.port, &errn)) == -1)
+	int errn = 0;
+	int_vec *sockets = bind_sockets(args.port, &errn);
+	if (errn != 0)
 		errx(errn, "Failed to bind socket with desired parameters");
 
-	if (listen(sock, SOMAXCONN) == -1)
-		err(SERVER_ERR, "listen");
-
-	while (true)
-		handle_MQTT_client(sock);
+#ifdef DEBUG
+	dprintf("bound sockets: %lu\n", sockets->nmemb);
+#endif
 
 	return 0;
 }
