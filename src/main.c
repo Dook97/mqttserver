@@ -57,9 +57,9 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		goto err;
 	}
 
-	int err = getaddrinfo(NULL, port, &hints, &res);
-	if (err) {
-		fprintf(stderr, "%s\n", gai_strerror(err));
+	int errn = getaddrinfo(NULL, port, &hints, &res);
+	if (errn) {
+		fprintf(stderr, "%s\n", gai_strerror(errn));
 		*err_out = USER_ERR;
 		goto err;
 	}
@@ -68,6 +68,20 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		int sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 		if (sock == -1)
 			continue;
+
+		/* From the ipv6(7) manpage:
+		 *
+		 * > If this flag [IPV6_V6ONLY] is set to true (nonzero), then the socket is
+		 * > restricted to sending and receiving IPv6 packets  only.   In this case, an IPv4
+		 * > and an IPv6 application can bind to a single port at the same time.
+		 *
+		 * We want that.
+		 */
+		if (addr->ai_family == AF_INET6) {
+			int opt = 1;
+			if (setsockopt(sock, SOL_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)))
+				err(SERVER_ERR, "setsockopt");
+		}
 
 #ifdef DEBUG
 		char stripaddr[4096];
@@ -107,11 +121,10 @@ err:
 	return sockets;
 }
 
-static void handle_MQTT_client(int sock) {
-	int connection_fd = accept(sock, NULL, NULL);
-	for (int c; read(connection_fd, &c, 1) == 1;) {
-		write(1, &c, 1);
-	}
+static void listen_and_serve(int_vec *sockets) {
+	for (size_t i = 0; i < sockets->nmemb; ++i)
+		if (listen(sockets->data[i], SOMAXCONN))
+			err(SERVER_ERR, "listen");
 }
 
 int main(int argc, char **argv) {
@@ -131,6 +144,8 @@ int main(int argc, char **argv) {
 #ifdef DEBUG
 	dprintf("bound sockets: %lu\n", sockets->nmemb);
 #endif
+
+	listen_and_serve(sockets);
 
 	return 0;
 }
