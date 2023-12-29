@@ -69,16 +69,22 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		if (sock == -1)
 			continue;
 
+		/* Allow the reuse of sockets even if there are lingering connections from the
+		 * previous invocation.
+		 */
+		int opt = 1;
+		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
+			err(SERVER_ERR, "setsockopt");
+
 		/* From the ipv6(7) manpage:
 		 *
 		 * > If this flag [IPV6_V6ONLY] is set to true (nonzero), then the socket is
-		 * > restricted to sending and receiving IPv6 packets  only.   In this case, an IPv4
+		 * > restricted to sending and receiving IPv6 packets only. In this case, an IPv4
 		 * > and an IPv6 application can bind to a single port at the same time.
 		 *
 		 * We want that.
 		 */
 		if (addr->ai_family == AF_INET6) {
-			int opt = 1;
 			if (setsockopt(sock, SOL_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)))
 				err(SERVER_ERR, "setsockopt");
 		}
