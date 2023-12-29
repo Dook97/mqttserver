@@ -26,7 +26,7 @@ static void sigint_handler(int sig) {
 
 	for (size_t i = 0; i < sockets->nmemb; ++i) {
 		if (close(sockets->data[i].fd))
-			derr(SERVER_ERR, "close");
+			dwarn("failed to close socket %d", sockets->data[i].fd);
 	}
 
 #ifdef DEBUG
@@ -202,21 +202,17 @@ static void listen_and_serve(pollfd_vec *sockets) {
 
 		for (size_t i = 0; i < sockets->nmemb; ++i) {
 			if (sockets->data[i].revents & POLLIN) {
-				struct sockaddr_storage *addr = NULL;
-				socklen_t *addrlen = NULL;
+				struct sockaddr_storage addr;
+				socklen_t addrlen = sizeof(struct sockaddr_storage);
 #ifdef DEBUG
-				struct sockaddr_storage backing = (struct sockaddr_storage){0};
-				socklen_t backing2;
-				addr = &backing;
-				addrlen = &backing2;
 				dprintf("connection pending on %d\n", sockets->data[i].fd);
 #endif
-				int conn = accept(sockets->data[i].fd, (struct sockaddr *)addr, addrlen);
+				int conn = accept(sockets->data[i].fd, (struct sockaddr *)&addr, &addrlen);
 				if (conn != -1) {
 #ifdef DEBUG
-					char buf[4096];
+					char buf[512];
 					dprintf("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
-						print_inaddr(sizeof(buf), buf, (struct sockaddr *)addr, *addrlen), conn);
+						print_inaddr(sizeof(buf), buf, (struct sockaddr *)&addr, addrlen), conn);
 #endif
 					handle_connection(conn);
 				} else {
@@ -242,7 +238,7 @@ int main(int argc, char **argv) {
 		derrx(USER_ERR, "Failed to parse commandline arguments");
 
 	int errn = 0;
-	pollfd_vec *sockets = bind_sockets(args.port, &errn);
+	bind_sockets(args.port, &errn);
 	if (errn != 0)
 		derrx(errn, "Failed to bind socket with desired parameters");
 
