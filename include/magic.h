@@ -27,36 +27,34 @@
 #define str(param) xstr(param)
 #define xstr(param) #param
 
-#define dprintf(...)                                                                         \
-	do {                                                                                 \
-		fprintf(stderr,                                                              \
-			"[" MAGENTA("DEBUG") " from " __FILE__ " line " str(__LINE__) "] "); \
-		fprintf(stderr, __VA_ARGS__);                                                \
+#define dprintf(...)                                                                       \
+	do {                                                                               \
+		fprintf(stderr, "[" MAGENTA("DEBUG") " " __FILE__ ":" str(__LINE__) "] "); \
+		fprintf(stderr, __VA_ARGS__);                                              \
 	} while (0)
 
-#define derr(errn, ...)                                                                        \
-	do {                                                                                   \
-		fprintf(stderr, "[" RED("ERR") " from " __FILE__ " line " str(__LINE__) "] "); \
-		err(errn, __VA_ARGS__);                                                        \
+#define derr(errn, ...)                                                              \
+	do {                                                                         \
+		fprintf(stderr, "[" RED("ERR") " " __FILE__ ":" str(__LINE__) "] "); \
+		err(errn, __VA_ARGS__);                                              \
 	} while (0)
 
-#define derrx(errn, ...)                                                                        \
-	do {                                                                                    \
-		fprintf(stderr, "[" RED("ERRX") " from " __FILE__ " line " str(__LINE__) "] "); \
-		errx(errn, __VA_ARGS__);                                                        \
+#define derrx(errn, ...)                                                              \
+	do {                                                                          \
+		fprintf(stderr, "[" RED("ERRX") " " __FILE__ ":" str(__LINE__) "] "); \
+		errx(errn, __VA_ARGS__);                                              \
 	} while (0)
 
-#define dwarn(...)                                                                                 \
-	do {                                                                                       \
-		fprintf(stderr, "[" YELLOW("WARN") " from " __FILE__ " line " str(__LINE__) "] "); \
-		warn(__VA_ARGS__);                                                                 \
+#define dwarn(...)                                                                       \
+	do {                                                                             \
+		fprintf(stderr, "[" YELLOW("WARN") " " __FILE__ ":" str(__LINE__) "] "); \
+		warn(__VA_ARGS__);                                                       \
 	} while (0)
 
-#define dwarnx(...)                                                                         \
-	do {                                                                                \
-		fprintf(stderr,                                                             \
-			"[" YELLOW("WARNX") " from " __FILE__ " line " str(__LINE__) "] "); \
-		warnx(__VA_ARGS__);                                                         \
+#define dwarnx(...)                                                                       \
+	do {                                                                              \
+		fprintf(stderr, "[" YELLOW("WARNX") " " __FILE__ ":" str(__LINE__) "] "); \
+		warnx(__VA_ARGS__);                                                       \
 	} while (0)
 
 #endif
