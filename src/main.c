@@ -16,24 +16,26 @@ static pollfd_vec *sockets = NULL;
 /* server exit code */
 int server_exit = 0;
 
-static void sigint_handler(int sig) {
-#ifdef DEBUG
-	dwarnx("SIGINT intercepted");
-#endif
-
+static void cleanup(void) {
 	if (sockets == NULL)
-		exit(server_exit);
+		return;
 
 	for (size_t i = 0; i < sockets->nmemb; ++i) {
 		if (close(sockets->data[i].fd))
 			dwarn("failed to close socket %d", sockets->data[i].fd);
 	}
 
+	free(sockets);
+	sockets = NULL;
+}
+
+static void sigint_handler(int sig) {
 #ifdef DEBUG
+	dwarnx("SIGINT intercepted");
 	dwarnx("Exiting due to SIGINT with exit code %d", server_exit);
 #endif
 
-	free(sockets);
+	// cleanup() will be called automatically
 	exit(server_exit);
 
 	(void)sig;
@@ -233,6 +235,11 @@ int main(int argc, char **argv) {
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGINT, &sa, NULL) == -1)
 		derr(SERVER_ERR, "sigaction: failed to register SIGINT handler");
+	if (sigaction(SIGTERM, &sa, NULL) == -1)
+		derr(SERVER_ERR, "sigaction: failed to register SIGTERM handler");
+
+	if (atexit(cleanup))
+		derr(SERVER_ERR, "atexit: failed to register at-exit cleanup function");
 
 	args args = {.port = MQTT_DEFAULT_PORT};
 	if (parse_args(argc, argv, &args) != 0)
