@@ -10,6 +10,13 @@
 #include "magic.h"
 #include "main.h"
 
+/* Parse commandline arguments.
+ *
+ * @param out Output parameter.
+ * @return Value indicating succes or failure.
+ * @retval 0 Success
+ * @retval nonzero Failure
+ */
 static int parse_args(int argc, char **argv, args *out) {
 	char *endptr = NULL;
 
@@ -41,6 +48,14 @@ err:
 	return 1;
 }
 
+/* Open, configure and bind all available sockets with given port on the device for both IPv6 and
+ * IPv4 communication.
+ *
+ * @param port String representation of the desired port number.
+ * @param err_out Output parameter signifying success (zero) or failure (nonzero).
+ * @return Vector of properly configured sockets (as file descriptors).
+ * @retval NULL On some types of failure.
+ */
 static int_vec *bind_sockets(const char *port, int *err_out) {
 	struct addrinfo *res = NULL;
 	struct addrinfo hints = {
@@ -53,18 +68,20 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 	int_vec *sockets;
 	vec_init(&sockets, 2);
 	if (sockets == NULL) {
+		dwarnx("%s\n", "Couldn't allocate memory for vector.");
 		*err_out = NO_MEMORY;
 		goto err;
 	}
 
 	int errn = getaddrinfo(NULL, port, &hints, &res);
 	if (errn) {
-		fprintf(stderr, "%s\n", gai_strerror(errn));
+		dwarnx("%s\n", gai_strerror(errn));
 		*err_out = USER_ERR;
 		goto err;
 	}
 
 	for (struct addrinfo *addr = res; addr != NULL; addr = addr->ai_next) {
+		bool error = false;
 		int sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 		if (sock == -1)
 			continue;
@@ -73,8 +90,10 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		 * previous invocation.
 		 */
 		int opt = 1;
-		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
-			derr(SERVER_ERR, "setsockopt");
+		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+			dwarn("setsockopt");
+			error = true;
+		}
 
 		/* From the ipv6(7) manpage:
 		 *
@@ -85,8 +104,10 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		 * We want that.
 		 */
 		if (addr->ai_family == AF_INET6) {
-			if (setsockopt(sock, SOL_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)))
-				derr(SERVER_ERR, "setsockopt");
+			if (setsockopt(sock, SOL_IPV6, IPV6_V6ONLY, &opt, sizeof(opt))) {
+				dwarn("setsockopt");
+				error = true;
+			}
 		}
 
 #ifdef DEBUG
@@ -99,7 +120,7 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 			stripaddr, strport);
 #endif
 
-		if (bind(sock, addr->ai_addr, addr->ai_addrlen) == 0) {
+		if (!error && bind(sock, addr->ai_addr, addr->ai_addrlen) == 0) {
 			bool error = false;
 			vec_append(&sockets, sock, &error);
 			if (error) {
