@@ -46,7 +46,7 @@ static void sigint_handler(int sig) {
  * @retval 0 Success
  * @retval nonzero Failure
  */
-static int parse_args(int argc, char **argv, args *out) {
+static int parse_args(int argc, char *argv[static 1], args out[static 1]) {
 	char *endptr = NULL;
 
 	for (int c; (c = getopt(argc, argv, "p:")) != -1;) {
@@ -77,7 +77,8 @@ err:
 	return 1;
 }
 
-static char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr *addr, socklen_t addrlen) {
+static char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
+			  socklen_t addrlen) {
 	// FIXME: Overkill - find some handy POSIX macros for these
 	char stripaddr[4096];
 	char strport[4096];
@@ -95,7 +96,7 @@ static char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr *a
  * @return Vector of properly configured sockets (as pollfd structs).
  * @retval NULL On some types of failure.
  */
-static pollfd_vec *bind_sockets(const char *port, int *err_out) {
+static pollfd_vec *bind_sockets(const char *port, int err_out[static 1]) {
 	struct addrinfo *res = NULL;
 	struct addrinfo hints = {
 		.ai_family = AF_UNSPEC, // both IPv4 and IPv6 are allowed
