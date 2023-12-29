@@ -74,7 +74,7 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		 */
 		int opt = 1;
 		if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)))
-			err(SERVER_ERR, "setsockopt");
+			derr(SERVER_ERR, "setsockopt");
 
 		/* From the ipv6(7) manpage:
 		 *
@@ -86,7 +86,7 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		 */
 		if (addr->ai_family == AF_INET6) {
 			if (setsockopt(sock, SOL_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)))
-				err(SERVER_ERR, "setsockopt");
+				derr(SERVER_ERR, "setsockopt");
 		}
 
 #ifdef DEBUG
@@ -130,22 +130,22 @@ err:
 static void listen_and_serve(int_vec *sockets) {
 	for (size_t i = 0; i < sockets->nmemb; ++i)
 		if (listen(sockets->data[i], SOMAXCONN))
-			err(SERVER_ERR, "listen");
+			derr(SERVER_ERR, "listen");
 }
 
 int main(int argc, char **argv) {
 #ifdef DEBUG
-	fprintf(stderr, RED(">>> YOU ARE RUNNING A DEBUG BUILD OF THE PROGRAM <<<\n\n"));
+	fprintf(stderr, RED(">>> YOU ARE RUNNING A DEBUG BUILD <<<\n\n"));
 #endif
 
 	args args = {.port = MQTT_DEFAULT_PORT};
 	if (parse_args(argc, argv, &args) != 0)
-		errx(USER_ERR, "Failed to parse commandline arguments");
+		derrx(USER_ERR, "Failed to parse commandline arguments");
 
 	int errn = 0;
 	int_vec *sockets = bind_sockets(args.port, &errn);
 	if (errn != 0)
-		errx(errn, "Failed to bind socket with desired parameters");
+		derrx(errn, "Failed to bind socket with desired parameters");
 
 #ifdef DEBUG
 	dprintf("bound sockets: %lu\n", sockets->nmemb);
