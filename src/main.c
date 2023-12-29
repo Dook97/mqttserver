@@ -1,6 +1,7 @@
 #include <err.h>
 #include <inttypes.h>
 #include <netdb.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <sys/socket.h>
@@ -9,6 +10,34 @@
 
 #include "magic.h"
 #include "main.h"
+
+static pollfd_vec *sockets = NULL;
+
+/* server exit code */
+int server_exit = 0;
+
+static void sigint_handler(int sig) {
+#ifdef DEBUG
+	dwarnx("SIGINT intercepted");
+#endif
+
+	if (sockets == NULL)
+		exit(server_exit);
+
+	for (size_t i = 0; i < sockets->nmemb; ++i) {
+		if (close(sockets->data[i].fd))
+			derr(SERVER_ERR, "close");
+	}
+
+#ifdef DEBUG
+	dwarnx("Exiting due to SIGINT with exit code %d", server_exit);
+#endif
+
+	free(sockets);
+	exit(server_exit);
+
+	(void)sig;
+}
 
 /* Parse commandline arguments.
  *
@@ -49,6 +78,7 @@ err:
 }
 
 static char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr *addr, socklen_t addrlen) {
+	// FIXME: Overkill - find some handy POSIX macros for these
 	char stripaddr[4096];
 	char strport[4096];
 	getnameinfo(addr, addrlen, stripaddr, sizeof(stripaddr), strport, sizeof(strport),
@@ -74,7 +104,6 @@ static pollfd_vec *bind_sockets(const char *port, int *err_out) {
 			    AI_NUMERICSERV, // use a port number instead of service name
 	};
 
-	pollfd_vec *sockets;
 	vec_init(&sockets, 2);
 	if (sockets == NULL) {
 		dwarnx("%s\n", "Couldn't allocate memory for vector.");
@@ -202,6 +231,11 @@ int main(int argc, char **argv) {
 #ifdef DEBUG
 	fprintf(stderr, RED(">>> YOU ARE RUNNING A DEBUG BUILD <<<\n\n"));
 #endif
+
+	struct sigaction sa = {.sa_handler = sigint_handler};
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGINT, &sa, NULL) == -1)
+		derr(SERVER_ERR, "sigaction: failed to register SIGINT handler");
 
 	args args = {.port = MQTT_DEFAULT_PORT};
 	if (parse_args(argc, argv, &args) != 0)

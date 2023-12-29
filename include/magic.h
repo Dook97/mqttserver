@@ -57,4 +57,7 @@
 		warnx(__VA_ARGS__);                                                       \
 	} while (0)
 
+/* server exit code */
+extern int server_exit;
+
 #endif
