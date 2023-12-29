@@ -113,8 +113,7 @@ static int_vec *bind_sockets(const char *port, int *err_out) {
 		}
 
 #ifdef DEBUG
-#include <errno.h>
-		dprintf(RED("FAILURE: ") "%s\n", strerror(errno));
+		warn(RED("FAILURE"));
 #endif
 
 		close(sock);

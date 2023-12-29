@@ -9,7 +9,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <string.h>
 
 #define VECTOR_DEF(type, vectype)                                                             \
 	/* Define a new vector type named 'vectype' holding items of type 'type'.             \
