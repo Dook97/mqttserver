@@ -72,4 +72,28 @@
 		*error = false;                                                                 \
 	} while (0)
 
+#define vec_trunc(vec, newcap, error)                                                 \
+	/* Truncate or extend vector to given capacity.                               \
+	 *                                                                            \
+	 * May move the vector to a different memory address.                         \
+	 *                                                                            \
+	 * If an error occurs 'error' will be set and vec will remain unchanged.      \
+	 *                                                                            \
+	 * @param vec Pointer to user's pointer to the vector.                        \
+	 * @param newcap Desired capacity.                                            \
+	 * @param error Pointer to a boolean signifying error.                        \
+	 *                                                                            \
+	 */                                                                           \
+	do {                                                                          \
+		const size_t membsize = sizeof((*vec)->data[0]);                      \
+		void *tmp = realloc(*vec, sizeof(**vec) + (*vec)->newcap * membsize); \
+		if (tmp == NULL) {                                                    \
+			*error = true;                                                \
+			break;                                                        \
+		}                                                                     \
+		*vec = tmp;                                                           \
+		vec->capacity = newcap;                                               \
+		*error = false;                                                       \
+	} while (0)
+
 #endif
