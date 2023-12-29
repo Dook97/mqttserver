@@ -16,12 +16,12 @@
 	 * 'vectype' will be an incomplete type, because it contains a flexible array member. \
 	 * Users will only have a pointer to dynamically allocated instances of the type      \
 	 *                                                                                    \
-	 * @member capacity Number of reserved memory slots for data items.                   \
+	 * @member cap Number of reserved memory slots for data items.                        \
 	 * @member nmemb Number of members.                                                   \
 	 * @member data Array storing the data.                                               \
 	 */                                                                                   \
 	typedef struct {                                                                      \
-		size_t capacity;                                                              \
+		size_t cap;                                                                   \
 		size_t nmemb;                                                                 \
 		type data[];                                                                  \
 	} vectype
@@ -43,57 +43,76 @@
 		*vec = malloc(sizeof(**vec) + reserve * membsize);                                 \
 		if (*vec == NULL)                                                                  \
 			break;                                                                     \
-		(*vec)->capacity = reserve;                                                        \
+		(*vec)->cap = reserve;                                                             \
 		(*vec)->nmemb = 0;                                                                 \
 	} while (0)
 
-#define vec_append(vec, item, error)                                                            \
-	/* Append an item to the vector.                                                        \
-	 *                                                                                      \
-	 * May move the vector to a different memory address.                                   \
-	 *                                                                                      \
-	 * @param vector Pointer to user's pointer to the vector.                               \
-	 * @param item The item to append.                                                      \
-	 * @param error Pointer to a boolean signifying error.                                  \
-	 */                                                                                     \
-	do {                                                                                    \
-		const size_t membsize = sizeof((*vec)->data[0]);                                \
-		if ((*vec)->nmemb == (*vec)->capacity) {                                        \
-			(*vec)->capacity *= 2;                                                  \
-			void *tmp = realloc(*vec, sizeof(**vec) + (*vec)->capacity * membsize); \
-			if (tmp == NULL) {                                                      \
-				*error = true;                                                  \
-				break;                                                          \
-			}                                                                       \
-			*vec = tmp;                                                             \
-		}                                                                               \
-		(*vec)->data[(*vec)->nmemb] = item;                                             \
-		++(*vec)->nmemb;                                                                \
-		*error = false;                                                                 \
+#define vec_append(vec, item, error)                                                       \
+	/* Append an item to the vector.                                                   \
+	 *                                                                                 \
+	 * May move the vector to a different memory address.                              \
+	 *                                                                                 \
+	 * @param vector Pointer to user's pointer to the vector.                          \
+	 * @param item The item to append.                                                 \
+	 * @param error Pointer to a boolean signifying error.                             \
+	 */                                                                                \
+	do {                                                                               \
+		const size_t membsize = sizeof((*vec)->data[0]);                           \
+		if ((*vec)->nmemb == (*vec)->cap) {                                        \
+			(*vec)->cap *= 2;                                                  \
+			void *tmp = realloc(*vec, sizeof(**vec) + (*vec)->cap * membsize); \
+			if (tmp == NULL) {                                                 \
+				*error = true;                                             \
+				break;                                                     \
+			}                                                                  \
+			*vec = tmp;                                                        \
+		}                                                                          \
+		(*vec)->data[(*vec)->nmemb] = item;                                        \
+		++(*vec)->nmemb;                                                           \
+		*error = false;                                                            \
 	} while (0)
 
-#define vec_trunc(vec, newcap, error)                                                 \
-	/* Truncate or extend vector to given capacity.                               \
-	 *                                                                            \
-	 * May move the vector to a different memory address.                         \
-	 *                                                                            \
-	 * If an error occurs 'error' will be set and vec will remain unchanged.      \
-	 *                                                                            \
-	 * @param vec Pointer to user's pointer to the vector.                        \
-	 * @param newcap Desired capacity.                                            \
-	 * @param error Pointer to a boolean signifying error.                        \
-	 *                                                                            \
-	 */                                                                           \
-	do {                                                                          \
-		const size_t membsize = sizeof((*vec)->data[0]);                      \
-		void *tmp = realloc(*vec, sizeof(**vec) + (*vec)->newcap * membsize); \
-		if (tmp == NULL) {                                                    \
-			*error = true;                                                \
-			break;                                                        \
-		}                                                                     \
-		*vec = tmp;                                                           \
-		vec->capacity = newcap;                                               \
-		*error = false;                                                       \
+#define vec_trunc(vec, newcap, error)                                            \
+	/* Truncate vector to given capacity.                                    \
+	 *                                                                       \
+	 * May move the vector to a different memory address.                    \
+	 *                                                                       \
+	 * If an error occurs 'error' will be set and vec will remain unchanged. \
+	 *                                                                       \
+	 * @param vec Pointer to user's pointer to the vector.                   \
+	 * @param newcap Desired capacity.                                       \
+	 * @param error Pointer to a boolean signifying error.                   \
+	 *                                                                       \
+	 */                                                                      \
+	do {                                                                     \
+		const size_t membsize = sizeof((*vec)->data[0]);                 \
+		void *tmp = realloc(*vec, sizeof(**vec) + newcap * membsize);    \
+		if (tmp == NULL) {                                               \
+			*error = true;                                           \
+			break;                                                   \
+		}                                                                \
+		*vec = tmp;                                                      \
+		vec->cap = newcap;                                               \
+		*error = false;                                                  \
+	} while (0)
+
+#define vec_extend(vec, capdiff, error)                                                        \
+	/* Extend vector capacity by 'capdiff' members.                                        \
+	 *                                                                                     \
+	 * @param vec Pointer to user's pointer to the vector.                                 \
+	 * @param capdiff Capacity delta.                                                      \
+	 * @param error Pointer to a boolean signifying error.                                 \
+	 */                                                                                    \
+	do {                                                                                   \
+		const size_t membsize = sizeof((*vec)->data[0]);                               \
+		void *tmp = realloc(*vec, sizeof(**vec) + ((*vec)->cap + capdiff) * membsize); \
+		if (tmp == NULL) {                                                             \
+			*error = true;                                                         \
+			break;                                                                 \
+		}                                                                              \
+		*vec = tmp;                                                                    \
+		vec->cap += diff;                                                              \
+		*error = false;                                                                \
 	} while (0)
 
 #endif
