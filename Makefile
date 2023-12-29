@@ -1,10 +1,11 @@
 .PHONY: all clean
 
+# use 'make EXTERNFLAGS=...' to specify own compiler flags
+# in particular 'make EXTERNFLAGS=-DDEBUG' to make a debug build
+
 CC = cc
 CFLAGS = -std=c99 -D_POSIX_C_SOURCE=200112L -Wall -Wextra -Wpedantic -I./include
 LDFLAGS =
-# flags set from terminal: make [TARGET] EXTERNFLAGS=...
-EXTERNFLAGS = -g
 
 all: mqttserver
 
