@@ -11,6 +11,10 @@
 #include "magic.h"
 #include "main.h"
 
+#ifdef DEBUG
+static char dbuf[4096];
+#endif
+
 static pollfd_vec *sockets = NULL;
 
 /* server exit code */
@@ -30,10 +34,8 @@ static void cleanup(void) {
 }
 
 static void sigint_handler(int sig) {
-#ifdef DEBUG
 	dwarnx("SIGINT intercepted");
 	dwarnx("Exiting due to SIGINT with exit code %d", server_exit);
-#endif
 
 	// cleanup() will be called automatically
 	exit(server_exit);
@@ -151,11 +153,8 @@ static pollfd_vec *bind_sockets(const char *port, int err_out[static 1]) {
 			}
 		}
 
-#ifdef DEBUG
-		char buf[4096];
-		dprintf("attempting to bind %s\n",
-			print_inaddr(sizeof(buf), buf, addr->ai_addr, addr->ai_addrlen));
-#endif
+		DPRINTF("attempting to bind %s\n",
+			print_inaddr(sizeof(dbuf), dbuf, addr->ai_addr, addr->ai_addrlen));
 
 		if (!error && bind(sock, addr->ai_addr, addr->ai_addrlen) == 0) {
 			bool error = false;
@@ -165,15 +164,11 @@ static pollfd_vec *bind_sockets(const char *port, int err_out[static 1]) {
 				*err_out = NO_MEMORY;
 				goto err;
 			}
-#ifdef DEBUG
-			dprintf(GREEN("SUCCESS:") " sockets[%zu] = %d\n", sockets->nmemb - 1, sock);
-#endif
+			DPRINTF(GREEN("SUCCESS:") " sockets[%zu] = %d\n", sockets->nmemb - 1, sock);
 			continue;
 		}
 
-#ifdef DEBUG
 		dwarn(RED("FAILURE"));
-#endif
 
 		close(sock);
 	}
@@ -231,15 +226,20 @@ int main(int argc, char **argv) {
 	fprintf(stderr, RED(">>> YOU ARE RUNNING A DEBUG BUILD <<<\n\n"));
 #endif
 
+static void prepare_cleanup(void) {
 	struct sigaction sa = {.sa_handler = sigint_handler};
 	sigemptyset(&sa.sa_mask);
-	if (sigaction(SIGINT, &sa, NULL) == -1)
-		derr(SERVER_ERR, "sigaction: failed to register SIGINT handler");
-	if (sigaction(SIGTERM, &sa, NULL) == -1)
-		derr(SERVER_ERR, "sigaction: failed to register SIGTERM handler");
+	if (sigaction(SIGINT, &sa, NULL) || sigaction(SIGTERM, &sa, NULL))
+		derr(SERVER_ERR, "sigaction");
 
 	if (atexit(cleanup))
 		derr(SERVER_ERR, "atexit: failed to register at-exit cleanup function");
+}
+
+int main(int argc, char **argv) {
+	DPRINTF(RED(">>> YOU ARE RUNNING A DEBUG BUILD <<<\n"));
+
+	prepare_cleanup();
 
 	args args = {.port = MQTT_DEFAULT_PORT};
 	if (parse_args(argc, argv, &args) != 0)
@@ -250,9 +250,7 @@ int main(int argc, char **argv) {
 	if (errn != 0)
 		derrx(errn, "Failed to bind socket with desired parameters");
 
-#ifdef DEBUG
-	dprintf("bound sockets: %lu\n", sockets->nmemb);
-#endif
+	DPRINTF("bound sockets: %lu\n", sockets->nmemb);
 
 	listen_and_serve(sockets);
 

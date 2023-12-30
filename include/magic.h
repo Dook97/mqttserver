@@ -2,6 +2,7 @@
 #define MAGIC_H_
 
 #include <stdio.h>
+#include <err.h>
 
 #define USER_ERR 1
 #define SERVER_ERR 2
@@ -11,7 +12,7 @@
 #define MQTT_DEFAULT_PORT "1883"
 
 // ANSI escape color sequences
-#ifdef DEBUG
+#ifdef COLOR
 #define GREEN(str)	"\033[1;32m" str "\033[0m"
 #define RED(str)	"\033[1;91m" str "\033[0m"
 #define YELLOW(str)	"\033[1;93m" str "\033[0m"
@@ -27,11 +28,15 @@
 #define str(param) xstr(param)
 #define xstr(param) #param
 
-#define dprintf(...)                                                                       \
+#ifdef DEBUG
+#define DPRINTF(...)                                                                       \
 	do {                                                                               \
 		fprintf(stderr, "[" MAGENTA("DEBUG") " " __FILE__ ":" str(__LINE__) "] "); \
 		fprintf(stderr, __VA_ARGS__);                                              \
 	} while (0)
+#else
+#define DPRINTF(...) do { } while (0)
+#endif
 
 #define derr(errn, ...)                                                              \
 	do {                                                                         \

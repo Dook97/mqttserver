@@ -6,7 +6,8 @@ UK during winter semester 23/24.
 ========================================================
 
 `$ make` to build
-`$ make EXTERNFLAGS=-DDEBUG` to build in debug mode
+`$ make EXTERNFLAGS="-DDEBUG -DCOLOR -g"` to build in
+debug mode
 
 ========================================================
 
