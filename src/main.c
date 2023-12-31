@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <err.h>
 #include <inttypes.h>
 #include <netdb.h>
@@ -180,51 +181,106 @@ err:
 	return sockets;
 }
 
-static void handle_connection(int conn) {
-	char buf[4096] = {0};
-	for (int i; (i = read(conn, buf, sizeof(buf))) > 0;)
-		write(2, buf, i);
-	close(conn);
+static bool process_packet(int conn, user *u) {
+	char buf[1024] = {0};
+	int i = read(conn, buf, sizeof(buf));
+
+	if (i == 0)
+		return false;
+
+	char addrbuf[128];
+	fprintf(stderr, "[%s]: ", print_inaddr(sizeof(addrbuf), addrbuf, (struct sockaddr *)&u->addr, u->addrlen));
+	write(2, buf, i);
+
+	return true;
 }
 
 static void listen_and_serve(pollfd_vec *sockets) {
+	bool vec_err; // vector error indication
+
 	for (size_t i = 0; i < sockets->nmemb; ++i)
 		if (listen(sockets->data[i].fd, SOMAXCONN))
 			derr(SERVER_ERR, "listen");
 
+	/* these two vectors must stay synchronized */
+	user_vec *users;
+	pollfd_vec *userconns;
+	vec_init(&users, 8);
+	vec_init(&userconns, 8);
+	if (users == NULL || userconns == NULL)
+		derr(NO_MEMORY, "malloc");
+
 	while (true) {
-		if (poll(sockets->data, sockets->nmemb, -1) == -1) {
+		assert(users->nmemb == userconns->nmemb);
+
+		if (poll(sockets->data, sockets->nmemb, POLL_TIMEOUT) == -1) {
 			dwarn("poll");
 			continue;
 		}
 
 		for (size_t i = 0; i < sockets->nmemb; ++i) {
 			if (sockets->data[i].revents & POLLIN) {
-				struct sockaddr_storage addr;
-				socklen_t addrlen = sizeof(struct sockaddr_storage);
-#ifdef DEBUG
-				dprintf("connection pending on %d\n", sockets->data[i].fd);
-#endif
-				int conn = accept(sockets->data[i].fd, (struct sockaddr *)&addr, &addrlen);
+				DPRINTF("connection pending on %d\n", sockets->data[i].fd);
+				user u = {.addrlen = sizeof(struct sockaddr_storage)};
+				int conn = accept(sockets->data[i].fd, (struct sockaddr *)&u.addr, &u.addrlen);
 				if (conn != -1) {
-#ifdef DEBUG
-					char buf[512];
-					dprintf("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
-						print_inaddr(sizeof(buf), buf, (struct sockaddr *)&addr, addrlen), conn);
-#endif
-					handle_connection(conn);
+					DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
+						print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen), conn);
+					struct pollfd item = {.fd = conn, .events = POLLIN};
+					vec_init(&u.subscriptions, 4);
+					vec_append(&userconns, item, &vec_err);
+					vec_append(&users, u, &vec_err);
+					if (vec_err || u.subscriptions == NULL)
+						derr(NO_MEMORY, "malloc");
 				} else {
 					dwarn("accept");
 				}
 			}
 		}
+
+		if (userconns->nmemb == 0)
+			continue;
+
+		if (poll(userconns->data, userconns->nmemb, POLL_TIMEOUT) == -1) {
+			dwarn("poll");
+			continue;
+		}
+
+		for (size_t i = 0; i < userconns->nmemb; ++i) {
+			short events = userconns->data[i].revents;
+			int *conn = &userconns->data[i].fd;
+
+			// assert(!(events & POLLNVAL));
+			switch (events & (POLLIN|POLLHUP|POLLERR)) {
+			case POLLIN:
+				if (!process_packet(*conn, &users->data[i])) {
+					DPRINTF("connection %d properly closed by client\n", *conn);
+					goto close_sock;
+				}
+				break;
+			case POLLHUP:
+			case POLLHUP | POLLIN:
+				DPRINTF("connection %d terminated by client\n", *conn);
+				goto close_sock;
+			case POLLERR:
+			case POLLERR | POLLIN:
+			case POLLHUP | POLLIN | POLLERR:
+				dwarnx("error on connection %d - closing", *conn);
+close_sock:
+				close(*conn);
+				*conn = -1;
+				/* TODO: remove from userconns and users */
+				break;
+#ifdef DEBUG
+			default:
+				derrx(SERVER_ERR,
+				      RED("Unexpected code path taken: ") "conn=%d flags=%d", *conn,
+				      events);
+#endif
+			}
+		}
 	}
 }
-
-int main(int argc, char **argv) {
-#ifdef DEBUG
-	fprintf(stderr, RED(">>> YOU ARE RUNNING A DEBUG BUILD <<<\n\n"));
-#endif
 
 static void prepare_cleanup(void) {
 	struct sigaction sa = {.sa_handler = sigint_handler};
