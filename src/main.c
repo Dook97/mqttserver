@@ -9,29 +9,42 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "magic.h"
 #include "main.h"
-
-#ifdef DEBUG
-static char dbuf[4096];
-#endif
-
-static pollfd_vec *sockets = NULL;
 
 /* server exit code */
 int server_exit = 0;
 
-static void cleanup(void) {
-	if (sockets == NULL)
-		return;
+#ifdef DEBUG
+/* buffer for debug prints */
+static char dbuf[4096];
+#endif
 
-	for (size_t i = 0; i < sockets->nmemb; ++i) {
-		if (close(sockets->data[i].fd))
-			dwarn("failed to close socket %d", sockets->data[i].fd);
+static users_t users = {
+	.data = NULL,
+	.conns = NULL,
+};
+
+static pollfd_vec *sockets;
+
+static void cleanup(void) {
+	if (sockets != NULL)
+		for (size_t i = 0; i < sockets->nmemb; ++i)
+			if (close(sockets->data[i].fd))
+				dwarn("failed to close socket %d", sockets->data[i].fd);
+
+	if (users.data != NULL && users.conns != NULL) {
+		assert(users.data->nmemb == users.conns->nmemb);
+		for (size_t i = 0; i < users.data->nmemb; ++i)
+			if (close(users.conns->data[i].fd))
+				dwarn("failed to close connection %d", users.conns->data[i].fd);
 	}
 
 	free(sockets);
+	free(users.data);
+	free(users.conns);
 	sockets = NULL;
+	users.data = NULL;
+	users.conns = NULL;
 }
 
 static void sigint_handler(int sig) {
@@ -181,7 +194,7 @@ err:
 	return sockets;
 }
 
-static bool process_packet(int conn, user *u) {
+static bool process_packet(int conn, user_data *u) {
 	char buf[1024] = {0};
 	int i = read(conn, buf, sizeof(buf));
 
@@ -195,86 +208,126 @@ static bool process_packet(int conn, user *u) {
 	return true;
 }
 
-static void listen_and_serve(pollfd_vec *sockets) {
-	bool vec_err; // vector error indication
+static void users_append(user_data *data, int connection) {
+	assert(users.data->nmemb == users.conns->nmemb);
 
+	bool vecerr = false;
+	struct pollfd item = {.fd = connection, .events = POLLIN};
+
+	SIG_PROTECT_BEGIN;
+
+	vec_append(&users.data, *data, &vecerr);
+	vec_append(&users.conns, item, &vecerr);
+
+	if (vecerr)
+		derr(NO_MEMORY, "malloc: failed to append user");
+
+	DPRINTF(GREEN("SUCCESSFULY") " added user\n");
+
+	SIG_PROTECT_END;
+
+	DPRINTF("active connections: %zu\n", users.conns->nmemb);
+
+	assert(users.data->nmemb == users.conns->nmemb);
+}
+
+static void users_remove_at(size_t index) {
+	assert(users.data->nmemb == users.conns->nmemb);
+
+	SIG_PROTECT_BEGIN;
+
+	vec_remove_at(users.data, index);
+	vec_remove_at(users.conns, index);
+
+	DPRINTF(GREEN("SUCCESSFULY") " removed user\n");
+
+	SIG_PROTECT_END;
+
+	DPRINTF("active connections: %zu\n", users.conns->nmemb);
+
+	assert(users.data->nmemb == users.conns->nmemb);
+}
+
+static void users_init(size_t capacity) {
+	vec_init(&users.data, capacity);
+	vec_init(&users.conns, capacity);
+	if (users.data == NULL || users.conns == NULL)
+		derr(NO_MEMORY, "malloc");
+}
+
+static void attempt_connect(int sock, short events) {
+	if (events & POLLIN) {
+		DPRINTF("connection pending on %d\n", sock);
+		user_data u = {.addrlen = sizeof(struct sockaddr_storage)};
+		int conn = accept(sock, (struct sockaddr *)&u.addr, &u.addrlen);
+		if (conn != -1) {
+			DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
+				print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen),
+				conn);
+
+			vec_init(&u.subscriptions, 4);
+			if (u.subscriptions == NULL)
+				derr(NO_MEMORY, "malloc");
+			users_append(&u, conn);
+		} else {
+			dwarn("accept");
+		}
+	}
+}
+
+static void listen_and_serve(pollfd_vec *sockets) {
 	for (size_t i = 0; i < sockets->nmemb; ++i)
 		if (listen(sockets->data[i].fd, SOMAXCONN))
 			derr(SERVER_ERR, "listen");
 
-	/* these two vectors must stay synchronized */
-	user_vec *users;
-	pollfd_vec *userconns;
-	vec_init(&users, 8);
-	vec_init(&userconns, 8);
-	if (users == NULL || userconns == NULL)
-		derr(NO_MEMORY, "malloc");
-
+	users_init(8);
 	while (true) {
-		assert(users->nmemb == userconns->nmemb);
-
 		if (poll(sockets->data, sockets->nmemb, POLL_TIMEOUT) == -1) {
 			dwarn("poll");
 			continue;
 		}
 
-		for (size_t i = 0; i < sockets->nmemb; ++i) {
-			if (sockets->data[i].revents & POLLIN) {
-				DPRINTF("connection pending on %d\n", sockets->data[i].fd);
-				user u = {.addrlen = sizeof(struct sockaddr_storage)};
-				int conn = accept(sockets->data[i].fd, (struct sockaddr *)&u.addr, &u.addrlen);
-				if (conn != -1) {
-					DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
-						print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen), conn);
-					struct pollfd item = {.fd = conn, .events = POLLIN};
-					vec_init(&u.subscriptions, 4);
-					vec_append(&userconns, item, &vec_err);
-					vec_append(&users, u, &vec_err);
-					if (vec_err || u.subscriptions == NULL)
-						derr(NO_MEMORY, "malloc");
-				} else {
-					dwarn("accept");
-				}
-			}
-		}
+		for (size_t i = 0; i < sockets->nmemb; ++i)
+			attempt_connect(sockets->data[i].fd, sockets->data[i].revents);
 
-		if (userconns->nmemb == 0)
+		if (users.conns->nmemb == 0)
 			continue;
 
-		if (poll(userconns->data, userconns->nmemb, POLL_TIMEOUT) == -1) {
+		if (poll(users.conns->data, users.conns->nmemb, POLL_TIMEOUT) == -1) {
 			dwarn("poll");
 			continue;
 		}
 
-		for (size_t i = 0; i < userconns->nmemb; ++i) {
-			short events = userconns->data[i].revents;
-			int *conn = &userconns->data[i].fd;
+		for (size_t i = 0; i < users.conns->nmemb; ++i) {
+			short events = users.conns->data[i].revents;
+			int conn = users.conns->data[i].fd;
 
-			// assert(!(events & POLLNVAL));
+			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
 			case POLLIN:
-				if (!process_packet(*conn, &users->data[i])) {
-					DPRINTF("connection %d properly closed by client\n", *conn);
+				if (!process_packet(conn, &users.data->data[i])) {
+					DPRINTF("connection %d properly closed by client\n", conn);
 					goto close_sock;
 				}
 				break;
 			case POLLHUP:
 			case POLLHUP | POLLIN:
-				DPRINTF("connection %d terminated by client\n", *conn);
+				DPRINTF("connection %d terminated by client\n", conn);
 				goto close_sock;
 			case POLLERR:
 			case POLLERR | POLLIN:
 			case POLLHUP | POLLIN | POLLERR:
-				dwarnx("error on connection %d - closing", *conn);
+				dwarnx(RED("error") " on connection %d - closing", conn);
 close_sock:
-				close(*conn);
-				*conn = -1;
-				/* TODO: remove from userconns and users */
+				close(conn);
+				users_remove_at(i);
+				break;
+			case 0:
 				break;
 #ifdef DEBUG
 			default:
 				derrx(SERVER_ERR,
-				      RED("Unexpected code path taken: ") "conn=%d flags=%d", *conn,
+				      RED("Unexpected code path taken: ") "conn=%d flags=%d", conn,
 				      events);
 #endif
 			}
@@ -302,6 +355,7 @@ int main(int argc, char **argv) {
 		derrx(USER_ERR, "Failed to parse commandline arguments");
 
 	int errn = 0;
+	// stores bound sockets inside a global variable
 	bind_sockets(args.port, &errn);
 	if (errn != 0)
 		derrx(errn, "Failed to bind socket with desired parameters");
