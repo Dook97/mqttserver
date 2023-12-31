@@ -6,8 +6,8 @@
 
 #define USER_ERR 1
 #define SERVER_ERR 2
-#define NO_SOCKET 254
-#define NO_MEMORY 255
+#define NO_SOCKET 126
+#define NO_MEMORY 127
 
 #define MQTT_DEFAULT_PORT "1883"
 

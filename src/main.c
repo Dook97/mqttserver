@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "main.h"
+#include "mqtt.h"
 
 /* server exit code */
 int server_exit = 0;
@@ -95,7 +96,7 @@ err:
 	return 1;
 }
 
-static char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
+char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 			  socklen_t addrlen) {
 	// FIXME: Overkill - find some handy POSIX macros for these
 	char stripaddr[4096];
@@ -192,20 +193,6 @@ static pollfd_vec *bind_sockets(const char *port, int err_out[static 1]) {
 err:
 	freeaddrinfo(res);
 	return sockets;
-}
-
-static bool process_packet(int conn, user_data *u) {
-	char buf[1024] = {0};
-	int i = read(conn, buf, sizeof(buf));
-
-	if (i == 0)
-		return false;
-
-	char addrbuf[128];
-	fprintf(stderr, "[%s]: ", print_inaddr(sizeof(addrbuf), addrbuf, (struct sockaddr *)&u->addr, u->addrlen));
-	write(2, buf, i);
-
-	return true;
 }
 
 static void users_append(user_data *data, int connection) {
@@ -316,6 +303,7 @@ static void listen_and_serve(pollfd_vec *sockets) {
 				goto close_sock;
 			case POLLERR:
 			case POLLERR | POLLIN:
+			case POLLERR | POLLHUP:
 			case POLLHUP | POLLIN | POLLERR:
 				dwarnx(RED("error") " on connection %d - closing", conn);
 close_sock:

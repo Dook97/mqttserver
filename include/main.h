@@ -58,4 +58,7 @@ typedef struct {
 	pollfd_vec *conns;
 } users_t;
 
+char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
+		   socklen_t addrlen);
+
 #endif
