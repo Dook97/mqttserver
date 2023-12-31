@@ -23,7 +23,7 @@
 	typedef struct {                                                                      \
 		size_t cap;                                                                   \
 		size_t nmemb;                                                                 \
-		type data[];                                                                  \
+		type arr[];                                                                   \
 	} vectype
 
 #define vec_init(vec, reserve)                                                                     \
@@ -35,7 +35,7 @@
 	 * failure.                                                                                \
 	 */                                                                                        \
 	do {                                                                                       \
-		const size_t vec_init__membsize = sizeof((*vec)->data[0]);                         \
+		const size_t vec_init__membsize = sizeof((*vec)->arr[0]);                          \
 		if (reserve < 1) {                                                                 \
 			*vec = NULL;                                                               \
 			break;                                                                     \
@@ -57,7 +57,7 @@
 	 * @param error Pointer to a boolean signifying error.                                     \
 	 */                                                                                        \
 	do {                                                                                       \
-		const size_t vec_append__membsize = sizeof((*vec)->data[0]);                       \
+		const size_t vec_append__membsize = sizeof((*vec)->arr[0]);                        \
 		if ((*vec)->nmemb == (*vec)->cap) {                                                \
 			(*vec)->cap *= 2;                                                          \
 			void *vec_append__tmp =                                                    \
@@ -68,7 +68,7 @@
 			}                                                                          \
 			*vec = vec_append__tmp;                                                    \
 		}                                                                                  \
-		(*vec)->data[(*vec)->nmemb] = item_;                                               \
+		(*vec)->arr[(*vec)->nmemb] = item_;                                                \
 		++(*vec)->nmemb;                                                                   \
 		*error = false;                                                                    \
 	} while (0)
@@ -86,7 +86,7 @@
 	 *                                                                           \
 	 */                                                                          \
 	do {                                                                         \
-		const size_t vec_trunc__membsize = sizeof((*vec)->data[0]);          \
+		const size_t vec_trunc__membsize = sizeof((*vec)->arr[0]);           \
 		void *vec_trunc__tmp =                                               \
 			realloc(*vec, sizeof(**vec) + newcap * vec_trunc__membsize); \
 		if (vec_trunc__tmp == NULL) {                                        \
@@ -106,7 +106,7 @@
 	 * @param error Pointer to a boolean signifying error.                                 \
 	 */                                                                                    \
 	do {                                                                                   \
-		const size_t vec_extend__membsize = sizeof((*vec)->data[0]);                   \
+		const size_t vec_extend__membsize = sizeof((*vec)->arr[0]);                    \
 		void *vec_extend__tmp = realloc(                                               \
 			*vec, sizeof(**vec) + ((*vec)->cap + capdiff) * vec_extend__membsize); \
 		if (vec_extend__tmp == NULL) {                                                 \
@@ -127,7 +127,7 @@
 	do {                                                                                       \
 		for (ssize_t vec_remove_at__i = index; vec_remove_at__i < (ssize_t)vec->nmemb - 1; \
 		     ++vec_remove_at__i)                                                           \
-			vec->data[vec_remove_at__i] = vec->data[vec_remove_at__i + 1];             \
+			vec->arr[vec_remove_at__i] = vec->arr[vec_remove_at__i + 1];               \
 		--(vec->nmemb);                                                                    \
 	} while (0)
 

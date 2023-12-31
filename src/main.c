@@ -30,14 +30,14 @@ static pollfd_vec *sockets;
 static void cleanup(void) {
 	if (sockets != NULL)
 		for (size_t i = 0; i < sockets->nmemb; ++i)
-			if (close(sockets->data[i].fd))
-				dwarn("failed to close socket %d", sockets->data[i].fd);
+			if (close(sockets->arr[i].fd))
+				dwarn("failed to close socket %d", sockets->arr[i].fd);
 
 	if (users.data != NULL && users.conns != NULL) {
 		assert(users.data->nmemb == users.conns->nmemb);
 		for (size_t i = 0; i < users.data->nmemb; ++i)
-			if (close(users.conns->data[i].fd))
-				dwarn("failed to close connection %d", users.conns->data[i].fd);
+			if (close(users.conns->arr[i].fd))
+				dwarn("failed to close connection %d", users.conns->arr[i].fd);
 	}
 
 	free(sockets);
@@ -209,6 +209,12 @@ static void users_append(user_data *data, int connection) {
 	if (vecerr)
 		derr(NO_MEMORY, "malloc: failed to append user");
 
+	vec_init(&data->subscriptions, 4);
+	if (data->subscriptions == NULL)
+		derr(NO_MEMORY, "malloc");
+
+	data->CONNECT_recieved = false;
+
 	DPRINTF(GREEN("SUCCESSFULY") " added user\n");
 
 	SIG_PROTECT_END;
@@ -225,6 +231,8 @@ static void users_remove_at(size_t index) {
 
 	vec_remove_at(users.data, index);
 	vec_remove_at(users.conns, index);
+
+	free(users.data->arr[index].subscriptions);
 
 	DPRINTF(GREEN("SUCCESSFULY") " removed user\n");
 
@@ -251,10 +259,6 @@ static void attempt_connect(int sock, short events) {
 			DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
 				print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen),
 				conn);
-
-			vec_init(&u.subscriptions, 4);
-			if (u.subscriptions == NULL)
-				derr(NO_MEMORY, "malloc");
 			users_append(&u, conn);
 		} else {
 			dwarn("accept");
@@ -264,36 +268,36 @@ static void attempt_connect(int sock, short events) {
 
 static void listen_and_serve(pollfd_vec *sockets) {
 	for (size_t i = 0; i < sockets->nmemb; ++i)
-		if (listen(sockets->data[i].fd, SOMAXCONN))
+		if (listen(sockets->arr[i].fd, SOMAXCONN))
 			derr(SERVER_ERR, "listen");
 
 	users_init(8);
 	while (true) {
-		if (poll(sockets->data, sockets->nmemb, POLL_TIMEOUT) == -1) {
+		if (poll(sockets->arr, sockets->nmemb, POLL_TIMEOUT) == -1) {
 			dwarn("poll");
 			continue;
 		}
 
 		for (size_t i = 0; i < sockets->nmemb; ++i)
-			attempt_connect(sockets->data[i].fd, sockets->data[i].revents);
+			attempt_connect(sockets->arr[i].fd, sockets->arr[i].revents);
 
 		if (users.conns->nmemb == 0)
 			continue;
 
-		if (poll(users.conns->data, users.conns->nmemb, POLL_TIMEOUT) == -1) {
+		if (poll(users.conns->arr, users.conns->nmemb, POLL_TIMEOUT) == -1) {
 			dwarn("poll");
 			continue;
 		}
 
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
-			short events = users.conns->data[i].revents;
-			int conn = users.conns->data[i].fd;
+			short events = users.conns->arr[i].revents;
+			int conn = users.conns->arr[i].fd;
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
 			case POLLIN:
-				if (!process_packet(conn, &users.data->data[i])) {
-					DPRINTF("connection %d properly closed by client\n", conn);
+				if (!process_packet(conn, &users.data->arr[i])) {
+					DPRINTF("connection %d properly closed\n", conn);
 					goto close_sock;
 				}
 				break;

@@ -9,6 +9,7 @@
 #include "magic.h"
 
 #define POLL_TIMEOUT 50 // milisecs
+#define MAX_MESSAGE_LEN 2048 // not counting the fixed header
 
 // block signals
 #define SIG_PROTECT_BEGIN                                                                       \
@@ -26,10 +27,7 @@
 		DPRINTF(MAGENTA("Blocking signals") ", to ensure consistency of user data.\n"); \
                                                                                                 \
 		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__mask, &SIG_PROTECT__oldmask))        \
-			dwarn("sigprocmask");                                                   \
-                                                                                                \
-		/* just to force a ';' - syntax highlighting gets screwed otherwise ;p */       \
-		do { } while (0)
+			dwarn("sigprocmask")                                                    \
 
 // ...do whatever needs to be done and the unblock them again
 #define SIG_PROTECT_END                                                    \
@@ -47,6 +45,7 @@ typedef struct {
 	socklen_t addrlen;
 	struct sockaddr_storage addr;
 
+	bool CONNECT_recieved;
 	str_vec *subscriptions;
 } user_data;
 

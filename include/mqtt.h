@@ -11,8 +11,7 @@
 
 #define MESSAGE_MAX_LEN 1024
 
-enum control_packet_type {
-	Reserved = 0,
+enum packet_type {
 	CONNECT = 1,
 	CONNACK = 2,
 	PUBLISH = 3,
@@ -27,7 +26,6 @@ enum control_packet_type {
 	PINGREQ = 12,
 	PINGRESP = 13,
 	DISCONNECT = 14,
-	Reserved_ = 15,
 };
 
 enum connack_code {
@@ -63,14 +61,14 @@ enum connack_code {
 
 typedef struct {
 	// 0x0 and 0xf are reserved and mustn't be used
-	char packet_type : 4;
-	char DUP : 1;
-	char QoS : 2;
-	char RETAIN : 1;
+	unsigned char packet_type : 4;
+	unsigned char flags : 4;
 	// max 0xffffff7f (=268 435 455)
 	// combined length of the variable header and payload
 	uint32_t remaining_length;
 } fixed_header;
+
+typedef void (*packet_handler)(fixed_header *h, user_data *u, char *packet);
 
 bool process_packet(int conn, user_data *u);
 
