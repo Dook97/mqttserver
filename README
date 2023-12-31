@@ -9,6 +9,14 @@ UK during winter semester 23/24.
 `$ make EXTERNFLAGS="-DDEBUG -DCOLOR -g"` to build in
 debug mode
 
+Only supports QoS 0 among other limitations.
+
+Just to make sure: DO NOT ACTUALLY USE THIS.
+
+This is a project for me to learn about UNIX systems
+programming (also to get a credit). Developing a
+practically usable MQTT server is a non-goal.
+
 ========================================================
 
 Author: Jan Doskočil
