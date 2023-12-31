@@ -47,7 +47,7 @@
 		(*vec)->nmemb = 0;                                                                 \
 	} while (0)
 
-#define vec_append(vec, item, error)                                                       \
+#define vec_append(vec, item_, error)                                                      \
 	/* Append an item to the vector.                                                   \
 	 *                                                                                 \
 	 * May move the vector to a different memory address.                              \
@@ -67,7 +67,7 @@
 			}                                                                  \
 			*vec = tmp;                                                        \
 		}                                                                          \
-		(*vec)->data[(*vec)->nmemb] = item;                                        \
+		(*vec)->data[(*vec)->nmemb] = item_;                                       \
 		++(*vec)->nmemb;                                                           \
 		*error = false;                                                            \
 	} while (0)
@@ -114,5 +114,21 @@
 		vec->cap += diff;                                                              \
 		*error = false;                                                                \
 	} while (0)
+
+#define vec_remove_at(vec, index)                                            \
+	/* Remove item at index from vector.                                 \
+	 *                                                                   \
+	 * @param vec Pointer to the vector.                                 \
+	 * @param index Index of the item to be removed.                     \
+	 */                                                                  \
+	do {                                                                 \
+		for (ssize_t i_ = index; i_ < (ssize_t)vec->nmemb - 1; ++i_) \
+			vec->data[i_] = vec->data[i_ + 1];                   \
+		--(vec->nmemb);                                              \
+	} while (0)
+
+/* common vector types */
+VECTOR_DEF(char *, str_vec);
+VECTOR_DEF(int, int_vec);
 
 #endif
