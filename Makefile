@@ -4,7 +4,7 @@
 # in particular 'make EXTERNFLAGS="-DDEBUG -DCOLOR -g"' to make a debug build
 
 CC = cc
-CFLAGS = -std=c99 -D_POSIX_C_SOURCE=200112L -Wall -Wextra -Wpedantic -I./include
+CFLAGS = -std=c99 -D_XOPEN_SOURCE=700 -Wall -Wextra -Wpedantic -I./include
 LDFLAGS =
 
 all: mqttserver
