@@ -78,8 +78,7 @@ static int send_connack(const int conn, const char code) {
 	 * 3. payload
 	 * 	- NONE
 	 */
-	char buf[4] = "\x20\x02\x00";
-	buf[3] = code;
+	char buf[4] = {'\x20', '\x02', '\x00', code};
 	return write(conn, buf, 4) == 4;
 }
 
@@ -149,8 +148,8 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	memcpy(usr->client_id, read_head, identifier_len);
 	usr->client_id[identifier_len] = '\0';
 
-	DPRINTF("CONNECT packet parsed " GREEN("successfully") " client id is " MAGENTA("%s\n"),
-		usr->client_id);
+	DPRINTF(MAGENTA("CONNECT") " packet parsed " GREEN("SUCCESSFULLY") " client id is " MAGENTA(
+			"%s\n"), usr->client_id);
 
 finish:
 	if (connack_ret == -1) {
@@ -173,11 +172,26 @@ static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const c
 }
 
 static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
-	return 0;
+	DPRINTF("User " MAGENTA("%s") " sent a " MAGENTA("PING") " packet; PONG!\n",
+		usr->client_id);
+
+	const char response[2] = {'\xd0', '\x00'};
+	return write(conn, response, 2) == 2;
+
+	(void)hdr;
+	(void)usr;
+	(void)packet;
 }
 
 static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
-	return 0;
+	DPRINTF("User " MAGENTA("%s") " sent a " MAGENTA("DISCONNECT") " packet\n",
+		usr->client_id);
+
+	return remove_usr_by_ptr(usr);
+
+	(void)hdr;
+	(void)conn;
+	(void)packet;
 }
 
 static packet_handler verify_fixed_header(const fixed_header *hdr, const user_data *usr) {

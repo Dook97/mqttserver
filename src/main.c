@@ -260,6 +260,9 @@ static void users_clean(void) {
 bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1]) {
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
 		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN)) {
+			if (users.conns->arr[i].fd == -1)
+				return false;
+
 			close(users.conns->arr[i].fd);
 			users.conns->arr[i].fd = -1;
 			return true;
@@ -270,7 +273,7 @@ bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1]) {
 
 bool remove_usr_by_ptr(user_data *p) {
 	ssize_t index = p - users.data->arr;
-	if (index < 0 || (size_t)index > users.data->nmemb)
+	if (index < 0 || (size_t)index > users.data->nmemb || users.conns->arr[index].fd == -1)
 		return false;
 	close(users.conns->arr[index].fd);
 	users.conns->arr[index].fd = -1;
