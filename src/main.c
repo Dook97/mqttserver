@@ -248,7 +248,7 @@ static void users_remove_at(size_t index) {
 	assert(users.data->nmemb == users.conns->nmemb);
 }
 
-static void users_mark_removed_at(size_t index) {
+void users_mark_removed_at(size_t index) {
 	users.data->arr[index].remove_mark = true;
 }
 
@@ -261,10 +261,11 @@ static void users_clean(void) {
 	}
 }
 
-void users_mark_removed_id(char id[static CLIENT_ID_MAXLEN + 1]) {
+ssize_t users_index_from_id(char id[static CLIENT_ID_MAXLEN + 1]) {
 	for (size_t i = 0; i < users.data->nmemb; ++i)
 		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN))
-			users_mark_removed_at(i);
+			return i;
+	return -1;
 }
 
 static void users_init(size_t capacity) {

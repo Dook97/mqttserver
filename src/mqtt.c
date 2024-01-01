@@ -59,12 +59,37 @@ static int32_t decode_remaining_length(int conn) {
  */
 static char *encode_remaining_length(char bytes[4]);
 
-static char *connect_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static int send_connack(const int conn, const char code) {
+	/* see Figure 3.8 - CONNACK Packet fixed header
+	 *
+	 * 1. the fixed header (2B)
+	 * 	1. packet type = 0b0010
+	 * 	2. flags = 0b0000
+	 * 	3. remaining length (1B) = 0x02
+	 *
+	 * see Figure 3.9 - CONNACK Packet variable header
+	 *
+	 * 2. variable header (2B)
+	 * 	1. Connect Acknowledge Flags (1B)
+	 * 		- [0] = Session Present; always 0 in this implementation
+	 * 		- rest = RESERVED 0s
+	 * 	2. Connect return code (1B)
+	 *
+	 * 3. payload
+	 * 	- NONE
+	 */
+	char buf[4] = "\x20\x02\x00";
+	buf[3] = code;
+	return write(conn, buf, 4) == 4;
+}
+
+static bool connect_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	DPRINTF("User sent a " MAGENTA("CONNECT") " packet\n");
 
 	assert(!usr->CONNECT_recieved);
 	usr->CONNECT_recieved = true;
 
+	int connack_ret = CONNECTION_ACCEPTED;
 	unsigned char *read_head = (unsigned char *)packet;
 
 	/* Figure 3.2 - Protocol Name bytes
@@ -72,22 +97,24 @@ static char *connect_handler(const fixed_header *hdr, user_data *usr, const char
 	 */
 	if (memcmp("\x00\x04MQTT", read_head, 6)) {
 		DPRINTF("CONNECT protocol name header " RED("incorrect\n"));
-		return false;
+		connack_ret = -1;
+		goto finish;
 	}
 	read_head += 6;
 
 	/* Figure 3.3 - Protocol Level byte */
 	if (*read_head != PROTOCOL_LEVEL) {
 		DPRINTF("CONNECT protocol level header " RED("incorrect\n"));
-		// TODO: send CONNACK with code UNACCEPTABLE_PROTOCOL_LEVEL
-		return false;
+		connack_ret = UNACCEPTABLE_PROTOCOL_LEVEL;
+		goto finish;
 	}
 
 	/* Figure 3.4 - Connect Flag bits */
 	if (*++read_head != CONNECT_FLAGS) {
 		DPRINTF("CONNECT flags " RED("incorrect") ", expected: %d got: %d\n", CONNECT_FLAGS,
 			*read_head);
-		return false;
+		connack_ret = -1;
+		goto finish;
 	}
 
 	/* Figure 3.5 Keep Alive bytes */
@@ -103,7 +130,8 @@ static char *connect_handler(const fixed_header *hdr, user_data *usr, const char
 	if (hdr->remaining_length - 12 != identifier_len) {
 		DPRINTF("client id has unexpected length; expected: %d, got: %d\n",
 			hdr->remaining_length - 12, identifier_len);
-		return false;
+		connack_ret = -1;
+		goto finish;
 	}
 
 	// now they're all safe :)
@@ -111,12 +139,14 @@ static char *connect_handler(const fixed_header *hdr, user_data *usr, const char
 	/* [MQTT-3.1.3-5] */
 	if (identifier_len > CLIENT_ID_MAXLEN) {
 		DPRINTF("CONNECT: supplied client id " RED("too long\n"));
-		// TODO: send CONNACK with code IDENTIFIER_REJECTED
-		return false;
+		connack_ret = IDENTIFIER_REJECTED;
+		goto finish;
 	}
 
 	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
-	users_mark_removed_id((char *)read_head);
+	ssize_t usr_index = users_index_from_id((char *)read_head);
+	if (usr_index != -1)
+		users_mark_removed_at(usr_index);
 
 	memcpy(usr->client_id, read_head, identifier_len);
 	usr->client_id[identifier_len] = '\0';
@@ -124,27 +154,31 @@ static char *connect_handler(const fixed_header *hdr, user_data *usr, const char
 	DPRINTF("CONNECT packet parsed " GREEN("successfully") " client id is " MAGENTA("%s\n"),
 		usr->client_id);
 
-	// TODO: send CONNACK with code CONNECTION_ACCEPTED
-	return true;
+finish:
+	if (connack_ret == -1) {
+		DPRINTF(MAGENTA("CONNECT") " packet parsing " RED("FAILED\n"));
+		return false;
+	}
+	return send_connack(conn, connack_ret);
 }
 
-static char *publish_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	return 0;
 }
 
-static char *subscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	return 0;
 }
 
-static char *unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	return 0;
 }
 
-static char *pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	return 0;
 }
 
-static char *disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	return 0;
 }
 
@@ -239,7 +273,7 @@ bool process_packet(int conn, user_data *usr) {
 		return false;
 	}
 
-	handler(&hdr, usr, message_buf);
+	handler(&hdr, usr, message_buf, conn);
 
 	return true;
 }

@@ -43,6 +43,7 @@ typedef struct {
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 		   socklen_t addrlen);
 
-void users_mark_removed_id(char id[static CLIENT_ID_MAXLEN + 1]);
+ssize_t users_index_from_id(char id[static CLIENT_ID_MAXLEN + 1]);
+void users_mark_removed_at(size_t index);
 
 #endif
