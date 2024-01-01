@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define VECTOR_DEF(type, vectype)                                                             \
 	/* Define a new vector type named 'vectype' holding items of type 'type'.             \
@@ -118,17 +119,16 @@
 		*error = false;                                                                \
 	} while (0)
 
-#define vec_remove_at(vec, index)                                                                  \
-	/* Remove item at index from vector.                                                       \
-	 *                                                                                         \
-	 * @param vec Pointer to the vector.                                                       \
-	 * @param index Index of the item to be removed.                                           \
-	 */                                                                                        \
-	do {                                                                                       \
-		for (ssize_t vec_remove_at__i = index; vec_remove_at__i < (ssize_t)vec->nmemb - 1; \
-		     ++vec_remove_at__i)                                                           \
-			vec->arr[vec_remove_at__i] = vec->arr[vec_remove_at__i + 1];               \
-		--(vec->nmemb);                                                                    \
+#define vec_remove_at(vec, index)                                        \
+	/* Remove item at index from vector.                             \
+	 *                                                               \
+	 * @param vec Pointer to the vector.                             \
+	 * @param index Index of the item to be removed.                 \
+	 */                                                              \
+	do {                                                             \
+		memmove(&vec->arr[index], &vec->arr[index + 1],          \
+			sizeof(vec->arr[0]) * (vec->nmemb - index - 1)); \
+		--(vec->nmemb);                                          \
 	} while (0)
 
 /* common vector types */
