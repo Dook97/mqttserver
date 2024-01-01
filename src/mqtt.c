@@ -59,7 +59,7 @@ static int32_t decode_remaining_length(int conn) {
  */
 static char *encode_remaining_length(char bytes[4]);
 
-static bool connect_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+static char *connect_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
 	DPRINTF("User sent a " MAGENTA("CONNECT") " packet\n");
 
 	assert(!usr->CONNECT_recieved);
@@ -115,6 +115,9 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 		return false;
 	}
 
+	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
+	users_mark_removed_id((char *)read_head);
+
 	memcpy(usr->client_id, read_head, identifier_len);
 	usr->client_id[identifier_len] = '\0';
 
@@ -125,11 +128,25 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	return true;
 }
 
-static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
-static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
-static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
-static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
-static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
+static char *publish_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+	return 0;
+}
+
+static char *subscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+	return 0;
+}
+
+static char *unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+	return 0;
+}
+
+static char *pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+	return 0;
+}
+
+static char *disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+	return 0;
+}
 
 static packet_handler verify_fixed_header(const fixed_header *hdr, const user_data *usr) {
 	if (hdr->remaining_length > MAX_MESSAGE_LEN) {
@@ -218,7 +235,7 @@ bool process_packet(int conn, user_data *usr) {
 	char message_buf[MAX_MESSAGE_LEN];
 	ssize_t nread = read(conn, message_buf, hdr.remaining_length);
 	if (nread != hdr.remaining_length) {
-		dwarnx("client didn't send enough data; expected: %d, got: %zd\n", hdr.remaining_length, nread);
+		dwarnx("client didn't send enough data; expected: %u, got: %zd\n", hdr.remaining_length, nread);
 		return false;
 	}
 

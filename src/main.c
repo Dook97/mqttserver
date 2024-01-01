@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -200,8 +201,15 @@ static void users_append(user_data *data, int connection) {
 
 	bool vecerr = false;
 	struct pollfd item = {.fd = connection, .events = POLLIN};
+	data->client_id[0] = '\0';
+	data->remove_mark = false;
+	data->CONNECT_recieved = false;
 
 	SIG_PROTECT_BEGIN;
+
+	vec_init(&data->subscriptions, 4);
+	if (data->subscriptions == NULL)
+		derr(NO_MEMORY, "malloc");
 
 	vec_append(&users.data, *data, &vecerr);
 	vec_append(&users.conns, item, &vecerr);
@@ -209,13 +217,7 @@ static void users_append(user_data *data, int connection) {
 	if (vecerr)
 		derr(NO_MEMORY, "malloc: failed to append user");
 
-	vec_init(&data->subscriptions, 4);
-	if (data->subscriptions == NULL)
-		derr(NO_MEMORY, "malloc");
-
-	data->CONNECT_recieved = false;
-
-	DPRINTF(GREEN("SUCCESSFULY") " added user\n");
+	DPRINTF(GREEN("SUCCESSFULY") " added user (connection %d)\n", connection);
 
 	SIG_PROTECT_END;
 
@@ -227,12 +229,15 @@ static void users_append(user_data *data, int connection) {
 static void users_remove_at(size_t index) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
+	DPRINTF("removing user '%s' (connection %d)\n", users.data->arr[index].client_id,
+		users.conns->arr[index].fd);
+
 	SIG_PROTECT_BEGIN;
 
+	close(users.conns->arr[index].fd);
+	free(users.data->arr[index].subscriptions);
 	vec_remove_at(users.data, index);
 	vec_remove_at(users.conns, index);
-
-	free(users.data->arr[index].subscriptions);
 
 	DPRINTF(GREEN("SUCCESSFULY") " removed user\n");
 
@@ -241,6 +246,25 @@ static void users_remove_at(size_t index) {
 	DPRINTF("active connections: %zu\n", users.conns->nmemb);
 
 	assert(users.data->nmemb == users.conns->nmemb);
+}
+
+static void users_mark_removed_at(size_t index) {
+	users.data->arr[index].remove_mark = true;
+}
+
+static void users_clean(void) {
+	for (size_t i = 0; i < users.data->nmemb;) {
+		if (users.data->arr[i].remove_mark)
+			users_remove_at(i);
+		else
+			++i;
+	}
+}
+
+void users_mark_removed_id(char id[static CLIENT_ID_MAXLEN + 1]) {
+	for (size_t i = 0; i < users.data->nmemb; ++i)
+		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN))
+			users_mark_removed_at(i);
 }
 
 static void users_init(size_t capacity) {
@@ -290,9 +314,13 @@ static void listen_and_serve(pollfd_vec *sockets) {
 		}
 
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
+			if (users.data->arr[i].remove_mark)
+				continue;
+
 			short events = users.conns->arr[i].revents;
 			int conn = users.conns->arr[i].fd;
 
+			assert(!users.data->arr[i].remove_mark);
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
 			case POLLIN:
@@ -311,8 +339,7 @@ static void listen_and_serve(pollfd_vec *sockets) {
 			case POLLHUP | POLLIN | POLLERR:
 				dwarnx(RED("error") " on connection %d - closing", conn);
 close_sock:
-				close(conn);
-				users_remove_at(i);
+				users_mark_removed_at(i);
 				break;
 			case 0:
 				break;
@@ -324,6 +351,8 @@ close_sock:
 #endif
 			}
 		}
+
+		users_clean();
 	}
 }
 

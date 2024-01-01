@@ -12,6 +12,32 @@
 #define MQTT_DEFAULT_PORT "1883"
 #define CLIENT_ID_MAXLEN 23
 
+// block signals
+#define SIG_PROTECT_BEGIN                                                                       \
+	do {                                                                                    \
+		sigset_t SIG_PROTECT__mask;                                                     \
+		sigset_t SIG_PROTECT__oldmask;                                                  \
+		sigfillset(&SIG_PROTECT__mask);                                                 \
+                                                                                                \
+		/* blocking these is a BAD idea */                                              \
+		sigdelset(&SIG_PROTECT__mask, SIGBUS);                                          \
+		sigdelset(&SIG_PROTECT__mask, SIGFPE);                                          \
+		sigdelset(&SIG_PROTECT__mask, SIGILL);                                          \
+		sigdelset(&SIG_PROTECT__mask, SIGSEGV);                                         \
+                                                                                                \
+		DPRINTF(MAGENTA("Blocking signals") ", to ensure consistency of user data.\n"); \
+                                                                                                \
+		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__mask, &SIG_PROTECT__oldmask))        \
+			dwarn("sigprocmask")
+
+// ...do whatever needs to be done then unblock them again
+#define SIG_PROTECT_END                                                    \
+		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__oldmask, NULL)) \
+			dwarn("sigprocmask");                              \
+		else                                                       \
+			DPRINTF(MAGENTA("Signals unblocked\n"));           \
+	} while (0)
+
 // ANSI escape color sequences
 #ifdef COLOR
 #define GREEN(str)	"\033[1;32m" str "\033[0m"

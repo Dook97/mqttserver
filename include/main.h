@@ -12,32 +12,6 @@
 #define POLL_TIMEOUT 50 // milisecs
 #define MAX_MESSAGE_LEN 2048 // not counting the fixed header
 
-// block signals
-#define SIG_PROTECT_BEGIN                                                                       \
-	do {                                                                                    \
-		sigset_t SIG_PROTECT__mask;                                                     \
-		sigset_t SIG_PROTECT__oldmask;                                                  \
-		sigfillset(&SIG_PROTECT__mask);                                                 \
-                                                                                                \
-		/* blocking these is a BAD idea */                                              \
-		sigdelset(&SIG_PROTECT__mask, SIGBUS);                                          \
-		sigdelset(&SIG_PROTECT__mask, SIGFPE);                                          \
-		sigdelset(&SIG_PROTECT__mask, SIGILL);                                          \
-		sigdelset(&SIG_PROTECT__mask, SIGSEGV);                                         \
-                                                                                                \
-		DPRINTF(MAGENTA("Blocking signals") ", to ensure consistency of user data.\n"); \
-                                                                                                \
-		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__mask, &SIG_PROTECT__oldmask))        \
-			dwarn("sigprocmask")                                                    \
-
-// ...do whatever needs to be done and the unblock them again
-#define SIG_PROTECT_END                                                    \
-		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__oldmask, NULL)) \
-			dwarn("sigprocmask");                              \
-									   \
-		DPRINTF(MAGENTA("Signals unblocked\n"));                   \
-	} while (0)                                                        \
-
 typedef struct {
 	char *port;
 } args;
@@ -45,6 +19,8 @@ typedef struct {
 typedef struct {
 	socklen_t addrlen;
 	struct sockaddr_storage addr;
+
+	bool remove_mark;
 
 	bool CONNECT_recieved;
 	/* after 1,5x of this, if no control packet was recieved, terminate the connection
@@ -66,5 +42,7 @@ typedef struct {
 
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 		   socklen_t addrlen);
+
+void users_mark_removed_id(char id[static CLIENT_ID_MAXLEN + 1]);
 
 #endif

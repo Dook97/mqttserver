@@ -84,7 +84,7 @@ typedef struct {
 	uint32_t remaining_length;
 } fixed_header;
 
-typedef bool (*packet_handler)(const fixed_header *h, user_data *u, const char *packet);
+typedef char *(*packet_handler)(const fixed_header *h, user_data *u, const char *packet);
 
 bool process_packet(int conn, user_data *u);
 
