@@ -1,15 +1,14 @@
+#include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "mqtt.h"
 #include "magic.h"
 
-static void connect_handler(fixed_header *hdr, user_data *usr, char *packet);
-static void publish_handler(fixed_header *hdr, user_data *usr, char *packet);
-static void subscribe_handler(fixed_header *hdr, user_data *usr, char *packet);
-static void unsubscribe_handler(fixed_header *hdr, user_data *usr, char *packet);
-static void pingreq_handler(fixed_header *hdr, user_data *usr, char *packet);
-static void disconnect_handler(fixed_header *hdr, user_data *usr, char *packet);
+static uint16_t read_uint16(const unsigned char buf[static 2]) {
+	return ((uint16_t)buf[0] << 8) + (uint16_t)buf[1];
+}
 
 /* Verify whether a string is valid w.r.t. the MQTT specification
  *
@@ -59,6 +58,78 @@ static int32_t decode_remaining_length(int conn) {
  * @retval UINT32_MAX on invalid input
  */
 static char *encode_remaining_length(char bytes[4]);
+
+static bool connect_handler(const fixed_header *hdr, user_data *usr, const char *packet) {
+	DPRINTF("User sent a " MAGENTA("CONNECT") " packet\n");
+
+	assert(!usr->CONNECT_recieved);
+	usr->CONNECT_recieved = true;
+
+	unsigned char *read_head = (unsigned char *)packet;
+
+	/* Figure 3.2 - Protocol Name bytes
+	 * this is safe - a CONNECT packet must have at least 13B of storage
+	 */
+	if (memcmp("\x00\x04MQTT", read_head, 6)) {
+		DPRINTF("CONNECT protocol name header " RED("incorrect\n"));
+		return false;
+	}
+	read_head += 6;
+
+	/* Figure 3.3 - Protocol Level byte */
+	if (*read_head != PROTOCOL_LEVEL) {
+		DPRINTF("CONNECT protocol level header " RED("incorrect\n"));
+		// TODO: send CONNACK with code UNACCEPTABLE_PROTOCOL_LEVEL
+		return false;
+	}
+
+	/* Figure 3.4 - Connect Flag bits */
+	if (*++read_head != CONNECT_FLAGS) {
+		DPRINTF("CONNECT flags " RED("incorrect") ", expected: %d got: %d\n", CONNECT_FLAGS,
+			*read_head);
+		return false;
+	}
+
+	/* Figure 3.5 Keep Alive bytes */
+	usr->keep_alive = read_uint16(++read_head);
+	read_head += 2;
+
+	// TODO: setup a keep alive timer somehow
+
+	uint16_t identifier_len = read_uint16(read_head);
+	read_head += 2;
+
+	// 12 bytes read so far - only 1 "safe" byte remains
+	if (hdr->remaining_length - 12 != identifier_len) {
+		DPRINTF("client id has unexpected length; expected: %d, got: %d\n",
+			hdr->remaining_length - 12, identifier_len);
+		return false;
+	}
+
+	// now they're all safe :)
+
+	/* [MQTT-3.1.3-5] */
+	if (identifier_len > CLIENT_ID_MAXLEN) {
+		DPRINTF("CONNECT: supplied client id " RED("too long\n"));
+		// TODO: send CONNACK with code IDENTIFIER_REJECTED
+		return false;
+	}
+
+	memcpy(usr->client_id, read_head, identifier_len);
+	usr->client_id[identifier_len] = '\0';
+
+	DPRINTF("CONNECT packet parsed " GREEN("successfully") " client id is " MAGENTA("%s\n"),
+		usr->client_id);
+
+	// TODO: send CONNACK with code CONNECTION_ACCEPTED
+	return true;
+}
+
+static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
+static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
+static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
+static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
+static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet){return 0;}
 
 static packet_handler verify_fixed_header(const fixed_header *hdr, const user_data *usr) {
 	if (hdr->remaining_length > MAX_MESSAGE_LEN) {
@@ -145,8 +216,9 @@ bool process_packet(int conn, user_data *usr) {
 		hdr.remaining_length);
 
 	char message_buf[MAX_MESSAGE_LEN];
-	if (read(conn, message_buf, hdr.remaining_length) != hdr.remaining_length) {
-		dwarnx("client didn't send enough data");
+	ssize_t nread = read(conn, message_buf, hdr.remaining_length);
+	if (nread != hdr.remaining_length) {
+		dwarnx("client didn't send enough data; expected: %d, got: %zd\n", hdr.remaining_length, nread);
 		return false;
 	}
 

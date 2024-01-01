@@ -11,6 +11,22 @@
 
 #define MESSAGE_MAX_LEN 1024
 
+/* revision number of the MQTT protocol - we only support this one */
+#define PROTOCOL_LEVEL 4
+
+/* - [0] = RESERVED; always 0
+ * - [1] = Clean Session; 1 means to not deal with
+ * sessions and is what we'll be using
+ * - [2] = Will Flag; 0 means don't deal with last-will
+ * messages and is what we'll be using
+ * - [3] & [4] = Will QoS; since we're presuming [2]=0
+ * these will also be 0
+ * - [5] = Will Retain; has to be 0
+ * - [6] = User Name; has to be 0
+ * - [7] = Password; has to be 0
+ */
+#define CONNECT_FLAGS 2
+
 enum packet_type {
 	CONNECT = 1,
 	CONNACK = 2,
@@ -30,7 +46,7 @@ enum packet_type {
 
 enum connack_code {
 	CONNECTION_ACCEPTED = 0,
-	UNSUPPORTED_MQTT_VERSION = 1,
+	UNACCEPTABLE_PROTOCOL_LEVEL = 1,
 	IDENTIFIER_REJECTED = 2,
 	SERVER_UNAVAILABLE = 3,
 	BAD_USER_OR_PASSWORD = 4,
@@ -68,7 +84,7 @@ typedef struct {
 	uint32_t remaining_length;
 } fixed_header;
 
-typedef void (*packet_handler)(fixed_header *h, user_data *u, char *packet);
+typedef bool (*packet_handler)(const fixed_header *h, user_data *u, const char *packet);
 
 bool process_packet(int conn, user_data *u);
 

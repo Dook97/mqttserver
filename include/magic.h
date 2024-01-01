@@ -10,6 +10,7 @@
 #define NO_MEMORY 127
 
 #define MQTT_DEFAULT_PORT "1883"
+#define CLIENT_ID_MAXLEN 23
 
 // ANSI escape color sequences
 #ifdef COLOR

@@ -1,6 +1,7 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
+#include <bits/stdint-uintn.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -46,6 +47,12 @@ typedef struct {
 	struct sockaddr_storage addr;
 
 	bool CONNECT_recieved;
+	/* after 1,5x of this, if no control packet was recieved, terminate the connection
+	 * [MQTT-3.1.2-24]
+	 * 0 means no timeout
+	 */
+	uint16_t keep_alive;
+	char client_id[CLIENT_ID_MAXLEN + 1]; // +1 for 0 terminator
 	str_vec *subscriptions;
 } user_data;
 
