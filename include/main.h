@@ -20,8 +20,6 @@ typedef struct {
 	socklen_t addrlen;
 	struct sockaddr_storage addr;
 
-	bool remove_mark;
-
 	bool CONNECT_recieved;
 	/* after 1,5x of this, if no control packet was recieved, terminate the connection
 	 * [MQTT-3.1.2-24]
@@ -43,7 +41,7 @@ typedef struct {
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 		   socklen_t addrlen);
 
-ssize_t users_index_from_id(char id[static CLIENT_ID_MAXLEN + 1]);
-void users_mark_removed_at(size_t index);
+bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1]);
+bool remove_usr_by_ptr(user_data *p);
 
 #endif

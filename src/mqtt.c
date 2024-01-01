@@ -144,9 +144,7 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	}
 
 	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
-	ssize_t usr_index = users_index_from_id((char *)read_head);
-	if (usr_index != -1)
-		users_mark_removed_at(usr_index);
+	remove_usr_by_id((char *)read_head);
 
 	memcpy(usr->client_id, read_head, identifier_len);
 	usr->client_id[identifier_len] = '\0';
@@ -159,7 +157,7 @@ finish:
 		DPRINTF(MAGENTA("CONNECT") " packet parsing " RED("FAILED\n"));
 		return false;
 	}
-	return send_connack(conn, connack_ret);
+	return send_connack(conn, connack_ret) && connack_ret == CONNECTION_ACCEPTED;
 }
 
 static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
@@ -273,7 +271,10 @@ bool process_packet(int conn, user_data *usr) {
 		return false;
 	}
 
-	handler(&hdr, usr, message_buf, conn);
+	if (!handler(&hdr, usr, message_buf, conn)) {
+		DPRINTF(RED("CLOSING") " connection %d due to a malformed packet\n", conn);
+		remove_usr_by_ptr(usr);
+	}
 
 	return true;
 }

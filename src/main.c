@@ -202,7 +202,6 @@ static void users_append(user_data *data, int connection) {
 	bool vecerr = false;
 	struct pollfd item = {.fd = connection, .events = POLLIN};
 	data->client_id[0] = '\0';
-	data->remove_mark = false;
 	data->CONNECT_recieved = false;
 
 	SIG_PROTECT_BEGIN;
@@ -229,12 +228,13 @@ static void users_append(user_data *data, int connection) {
 static void users_remove_at(size_t index) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
-	DPRINTF("removing user '%s' (connection %d)\n", users.data->arr[index].client_id,
+	DPRINTF("removing user '%s'\n", users.data->arr[index].client_id,
 		users.conns->arr[index].fd);
 
 	SIG_PROTECT_BEGIN;
 
-	close(users.conns->arr[index].fd);
+	if (users.conns->arr[index].fd != -1)
+		close(users.conns->arr[index].fd);
 	free(users.data->arr[index].subscriptions);
 	vec_remove_at(users.data, index);
 	vec_remove_at(users.conns, index);
@@ -248,24 +248,33 @@ static void users_remove_at(size_t index) {
 	assert(users.data->nmemb == users.conns->nmemb);
 }
 
-void users_mark_removed_at(size_t index) {
-	users.data->arr[index].remove_mark = true;
-}
-
 static void users_clean(void) {
 	for (size_t i = 0; i < users.data->nmemb;) {
-		if (users.data->arr[i].remove_mark)
+		if (users.conns->arr[i].fd == -1)
 			users_remove_at(i);
 		else
 			++i;
 	}
 }
 
-ssize_t users_index_from_id(char id[static CLIENT_ID_MAXLEN + 1]) {
-	for (size_t i = 0; i < users.data->nmemb; ++i)
-		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN))
-			return i;
-	return -1;
+bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1]) {
+	for (size_t i = 0; i < users.data->nmemb; ++i) {
+		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN)) {
+			close(users.conns->arr[i].fd);
+			users.conns->arr[i].fd = -1;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool remove_usr_by_ptr(user_data *p) {
+	ssize_t index = p - users.data->arr;
+	if (index < 0 || (size_t)index > users.data->nmemb)
+		return false;
+	close(users.conns->arr[index].fd);
+	users.conns->arr[index].fd = -1;
+	return true;
 }
 
 static void users_init(size_t capacity) {
@@ -315,13 +324,12 @@ static void listen_and_serve(pollfd_vec *sockets) {
 		}
 
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
-			if (users.data->arr[i].remove_mark)
+			if (users.conns->arr[i].fd == -1)
 				continue;
 
 			short events = users.conns->arr[i].revents;
 			int conn = users.conns->arr[i].fd;
 
-			assert(!users.data->arr[i].remove_mark);
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
 			case POLLIN:
@@ -340,7 +348,8 @@ static void listen_and_serve(pollfd_vec *sockets) {
 			case POLLHUP | POLLIN | POLLERR:
 				dwarnx(RED("error") " on connection %d - closing", conn);
 close_sock:
-				users_mark_removed_at(i);
+				close(users.conns->arr[i].fd);
+				users.conns->arr[i].fd = -1;
 				break;
 			case 0:
 				break;
