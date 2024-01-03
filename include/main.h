@@ -42,7 +42,7 @@ typedef struct {
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 		   socklen_t addrlen);
 
-bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1]);
-bool remove_usr_by_ptr(user_data *p);
+bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1], bool gracefully);
+bool remove_usr_by_ptr(user_data *p, bool gracefully);
 
 #endif

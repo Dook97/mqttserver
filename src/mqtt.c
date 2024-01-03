@@ -200,7 +200,7 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	read_head += 2;
 
 	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
-	if (remove_usr_by_id((char *)read_head))
+	if (remove_usr_by_id((char *)read_head, true))
 		DPRINTF("a user with matching id found - will be disconnected\n");
 
 	/* store the userid string into the new client */
@@ -372,7 +372,7 @@ static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char 
 static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	DPRINTF("User " MAGENTA("%s") " sent a " MAGENTA("DISCONNECT") " packet\n", usr->client_id);
 
-	return remove_usr_by_ptr(usr);
+	return remove_usr_by_ptr(usr, true);
 
 	(void)hdr;
 	(void)conn;
@@ -454,10 +454,16 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 
 bool process_packet(int conn, user_data *usr) {
 	char initial;
-	if (read(conn, &initial, 1) != 1) {
+	ssize_t nread = read(conn, &initial, 1);
+	if (nread == 0) {
 		DPRINTF("client closed connection\n");
+		remove_usr_by_ptr(usr, true);
+		return true;
+	} else if (nread == -1) {
+		dwarnx("connection error");
 		return false;
 	}
+	assert(nread == 1);
 
 	fixed_header hdr = {
 		.packet_type = (initial & 0xf0) >> 4,
@@ -475,7 +481,7 @@ bool process_packet(int conn, user_data *usr) {
 	}
 
 	char message_buf[MAX_MESSAGE_LEN];
-	ssize_t nread = read(conn, message_buf, hdr.remaining_length);
+	nread = read(conn, message_buf, hdr.remaining_length);
 	if (nread != hdr.remaining_length) {
 		dwarnx("client didn't send enough data; expected: %u, got: %zd", hdr.remaining_length, nread);
 		return false;
