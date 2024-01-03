@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -24,9 +25,51 @@ static uint16_t read_uint16(const unsigned char buf[static 2]) {
  * @retval true If valid.
  * @retval false If invalid.
  */
-// static bool validate_str(size_t len, char str[static len]) {
-// 	return true;
-// }
+static ssize_t validate_str(const size_t maxlen, const unsigned char str[static maxlen]) {
+	uint16_t len = read_uint16(str);
+
+	for (const unsigned char *head = str + 2; head < str + 2 + len; ++head)
+		if (*head < ' ' || *head == 0x7f)
+			return -1;
+
+	return len;
+}
+
+static ssize_t validate_topic(const size_t maxlen, const unsigned char str[static maxlen]) {
+	ssize_t len = validate_str(maxlen, str);
+	if (len < 1)
+		return -1;
+
+	/* [MQTT-4.7.2-1] */
+	if (*(str + 2) == '$')
+		return -1;
+
+	for (const unsigned char *head = str + 2; head < str + 2 + len; ++head) {
+		switch (*head) {
+		case '/':
+		case '#':
+		case '+':
+			return -1;
+		default:
+			break;
+		}
+	}
+
+	return len;
+}
+
+static ssize_t validate_clientid(const size_t maxlen, const unsigned char str[static maxlen]) {
+	ssize_t len = validate_str(maxlen, str);
+	if (len < 1)
+		return -1;
+
+	/* [MQTT-3.1.3-5] */
+	for (const unsigned char *head = str + 2; head < str + 2 + len; ++head)
+		if (!isalnum(*head))
+			return -1;
+
+	return len;
+}
 
 /* Read and decode between 1 and 4 bytes of data present in the 'Remaining Length' field in the
  * fixed header of a MQTT packet.
@@ -95,7 +138,7 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	 * this is safe - a CONNECT packet must have at least 13B of storage
 	 */
 	if (memcmp("\x00\x04MQTT", read_head, 6)) {
-		DPRINTF("CONNECT protocol name header " RED("incorrect\n"));
+		dwarnx(MAGENTA("CONNECT") " protocol name header " RED("incorrect"));
 		connack_ret = -1;
 		goto finish;
 	}
@@ -103,15 +146,15 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 
 	/* Figure 3.3 - Protocol Level byte */
 	if (*read_head != PROTOCOL_LEVEL) {
-		DPRINTF("CONNECT protocol level header " RED("incorrect\n"));
+		dwarnx(MAGENTA("CONNECT") " protocol level header " RED("incorrect"));
 		connack_ret = UNACCEPTABLE_PROTOCOL_LEVEL;
 		goto finish;
 	}
 
 	/* Figure 3.4 - Connect Flag bits */
 	if (*++read_head != CONNECT_FLAGS) {
-		DPRINTF("CONNECT flags " RED("incorrect") ", expected: %d got: %d\n", CONNECT_FLAGS,
-			*read_head);
+		dwarnx(MAGENTA("CONNECT") " flags " RED("incorrect") ", expected: %d got: %d",
+		       CONNECT_FLAGS, *read_head);
 		connack_ret = -1;
 		goto finish;
 	}
@@ -122,29 +165,29 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 
 	// TODO: setup a keep alive timer somehow
 
-	uint16_t identifier_len = read_uint16(read_head);
-	read_head += 2;
+	// 10B read so far + 2B for the utf8 string header
+	ssize_t identifier_len = validate_clientid(hdr->remaining_length - 12, read_head);
 
-	// 12 bytes read so far - only 1 "safe" byte remains
-	if (hdr->remaining_length - 12 != identifier_len) {
-		DPRINTF("client id has unexpected length; expected: %d, got: %d\n",
-			hdr->remaining_length - 12, identifier_len);
-		connack_ret = -1;
-		goto finish;
-	}
-
-	// now they're all safe :)
-
-	/* [MQTT-3.1.3-5] */
-	if (identifier_len > CLIENT_ID_MAXLEN) {
-		DPRINTF("CONNECT: supplied client id " RED("too long\n"));
+	if (identifier_len != hdr->remaining_length - 12) {
+		dwarnx("invalid client id %zd", identifier_len);
 		connack_ret = IDENTIFIER_REJECTED;
 		goto finish;
 	}
 
+	/* [MQTT-3.1.3-5] */
+	if (identifier_len > CLIENT_ID_MAXLEN) {
+		dwarnx(MAGENTA("CONNECT") " supplied client id " RED("too long"));
+		connack_ret = IDENTIFIER_REJECTED;
+		goto finish;
+	}
+
+	/* skip the 2B storing utf8 string length */
+	read_head += 2;
+
 	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
 	remove_usr_by_id((char *)read_head);
 
+	/* store the userid string into the new client */
 	memcpy(usr->client_id, read_head, identifier_len);
 	usr->client_id[identifier_len] = '\0';
 
@@ -153,7 +196,7 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 
 finish:
 	if (connack_ret == -1) {
-		DPRINTF(MAGENTA("CONNECT") " packet parsing " RED("FAILED\n"));
+		dwarnx(MAGENTA("CONNECT") " packet parsing " RED("FAILED"));
 		return false;
 	}
 	return send_connack(conn, connack_ret) && connack_ret == CONNECTION_ACCEPTED;
@@ -204,9 +247,11 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 	switch (hdr->packet_type) {
 	case CONNECT:
 		/* 10B variable header - Figure 3.6 - Variable header
-		 * + client id which has 2B length prefix and contains at least one character [MQTT-3.1.3-5]
+		 * + client id which has 2B length prefix and contains at least one character
+		 * [MQTT-3.1.3-5]
 		 */
-		if (hdr->flags == 0 && hdr->remaining_length >= 13 && !usr->CONNECT_recieved)
+		if (hdr->flags == CONNECT_DEF_FLAGS && hdr->remaining_length >= 13
+		    && !usr->CONNECT_recieved)
 			return connect_handler;
 		break;
 	case PUBLISH:
@@ -228,7 +273,8 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 * contains at least one topic filter [MQTT-3.8.3-3] which is a utf8 string, at
 		 * least one character long [MQTT-4.7.3-1] + a QoS byte; in total 6B or more
 		 */
-		if (hdr->flags == 2 && hdr->remaining_length >= 6 && usr->CONNECT_recieved)
+		if (hdr->flags == SUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 6
+		    && usr->CONNECT_recieved)
 			return subscribe_handler;
 		break;
 	case UNSUBSCRIBE:
@@ -236,17 +282,20 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 *
 		 * length: packet identifier (2B), at least one topic filter (3B)
 		 */
-		if (hdr->flags == 2 && hdr->remaining_length >= 5 && usr->CONNECT_recieved)
+		if (hdr->flags == UNSUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 5
+		    && usr->CONNECT_recieved)
 			return unsubscribe_handler;
 		break;
 	case PINGREQ:
 		/* see Figure 3.33 - PINGREQ Packet fixed header */
-		if (hdr->flags == 0 && hdr->remaining_length == 0 && usr->CONNECT_recieved)
+		if (hdr->flags == PINGREQ_DEF_FLAGS && hdr->remaining_length == 0
+		    && usr->CONNECT_recieved)
 			return pingreq_handler;
 		break;
 	case DISCONNECT:
 		/* see Figure 3.35 - DISCONNECT Packet fixed header */
-		if (hdr->flags == 0 && hdr->remaining_length == 0 && usr->CONNECT_recieved)
+		if (hdr->flags == DISCONNECT_DEF_FLAGS && hdr->remaining_length == 0
+		    && usr->CONNECT_recieved)
 			return disconnect_handler;
 		break;
 	default:
@@ -286,7 +335,7 @@ bool process_packet(int conn, user_data *usr) {
 	}
 
 	if (!handler(&hdr, usr, message_buf, conn)) {
-		DPRINTF(RED("CLOSING") " connection %d due to a malformed packet\n", conn);
+		dwarnx(RED("CLOSING") " connection %d due to a malformed packet", conn);
 		remove_usr_by_ptr(usr);
 	}
 
