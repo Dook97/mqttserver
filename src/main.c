@@ -146,6 +146,19 @@ static pollfd_vec *bind_sockets(const char *port, int err_out[static 1]) {
 		if (sock == -1)
 			continue;
 
+		/* by default send a TCP RST, only if the connection is to be closed properly use
+		 * setsockopt to change this individually
+		 */
+		struct linger lingeropt = {
+			.l_onoff = 1,
+			.l_linger = 0,
+		};
+
+		if (setsockopt(sock, SOL_SOCKET, SO_LINGER, &lingeropt, sizeof(lingeropt))) {
+			dwarn("setsockopt");
+			error = true;
+		}
+
 		/* Allow the reuse of sockets even if there are lingering connections from the
 		 * previous invocation.
 		 */
@@ -226,16 +239,25 @@ static void users_append(user_data *data, int connection) {
 	assert(users.data->nmemb == users.conns->nmemb);
 }
 
+static void remove_usr_by_index(size_t index) {
+	if (users.conns->arr[index].fd == -1)
+		return;
+
+	struct linger lopt = {.l_onoff = 0};
+	setsockopt(users.conns->arr[index].fd, SOL_SOCKET, SO_LINGER, &lopt, sizeof(lopt));
+
+	close(users.conns->arr[index].fd);
+	users.conns->arr[index].fd = -1;
+}
+
 static void users_remove_at(size_t index) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
-	DPRINTF("removing user '%s'\n", users.data->arr[index].client_id,
-		users.conns->arr[index].fd);
+	DPRINTF("removing user " MAGENTA("'%s'") "\n", users.data->arr[index].client_id);
 
 	SIG_PROTECT_BEGIN;
 
-	if (users.conns->arr[index].fd != -1)
-		close(users.conns->arr[index].fd);
+	remove_usr_by_index(index);
 	free(users.data->arr[index].subscriptions);
 	vec_remove_at(users.data, index);
 	vec_remove_at(users.conns, index);
@@ -264,8 +286,7 @@ bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1]) {
 			if (users.conns->arr[i].fd == -1)
 				return false;
 
-			close(users.conns->arr[i].fd);
-			users.conns->arr[i].fd = -1;
+			remove_usr_by_index(i);
 			return true;
 		}
 	}
@@ -276,14 +297,8 @@ bool remove_usr_by_ptr(user_data *p) {
 	ssize_t index = p - users.data->arr;
 	if (index < 0 || (size_t)index > users.data->nmemb || users.conns->arr[index].fd == -1)
 		return false;
-	close(users.conns->arr[index].fd);
-	users.conns->arr[index].fd = -1;
+	remove_usr_by_index(index);
 	return true;
-}
-
-static void remove_usr_by_index(size_t index) {
-	close(users.conns->arr[index].fd);
-	users.conns->arr[index].fd = -1;
 }
 
 static void users_init(size_t capacity) {
@@ -337,32 +352,36 @@ static void listen_and_serve(pollfd_vec *sockets) {
 			int conn = users.conns->arr[i].fd;
 			short events = users.conns->arr[i].revents;
 
+			if (conn == -1)
+				continue;
+
 			/* keep-alive */
 			if (u->CONNECT_recieved && u->keep_alive != 0
-			    && time(NULL) - u->keepalive_timestamp > (u->keep_alive * 3) / 2)
-				goto close_sock;
-
-			if (users.conns->arr[i].fd == -1)
+			    && time(NULL) - u->keepalive_timestamp > (u->keep_alive * 3) / 2) {
+				dwarnx("user %s has exceeded his keep-alive timeout of %d - disconnecting",
+				       u->client_id, u->keep_alive);
+				remove_usr_by_index(i);
 				continue;
+			}
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
 			case POLLIN:
 				if (!process_packet(conn, &users.data->arr[i])) {
 					DPRINTF("connection %d properly closed\n", conn);
-					goto close_sock;
+					remove_usr_by_index(i);
 				}
 				break;
 			case POLLHUP:
 			case POLLHUP | POLLIN:
 				DPRINTF("connection %d terminated by client\n", conn);
-				goto close_sock;
+				remove_usr_by_index(i);
+				break;
 			case POLLERR:
 			case POLLERR | POLLIN:
 			case POLLERR | POLLHUP:
 			case POLLHUP | POLLIN | POLLERR:
 				dwarnx(RED("error") " on connection %d - closing", conn);
-close_sock:
 				remove_usr_by_index(i);
 				break;
 			case 0:

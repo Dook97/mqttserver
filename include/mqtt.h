@@ -53,6 +53,13 @@ enum connack_code {
 	NOT_AUTHORIZED = 5,
 };
 
+enum suback_code {
+	SUCCESS_QOS_0 = 0,
+	SUCCESS_QOS_1 = 1,
+	SUCCESS_QOS_2 = 2,
+	FAILURE = 0x80,
+};
+
 /* except for PUBLISH all control packets have the flags field predefined
  * for PUBLISH these have the following meaning:
  * 	- 3 (msb) = DUP = Duplicate delivery of a PUBLISH Control Packet
@@ -81,7 +88,7 @@ typedef struct {
 	unsigned char flags : 4;
 	// max 0xffffff7f (=268 435 455)
 	// combined length of the variable header and payload
-	uint32_t remaining_length;
+	int32_t remaining_length;
 } fixed_header;
 
 typedef bool (*packet_handler)(const fixed_header *h, user_data *u, const char *packet, int conn);
