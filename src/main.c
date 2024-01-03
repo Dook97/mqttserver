@@ -8,6 +8,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "main.h"
@@ -280,6 +281,11 @@ bool remove_usr_by_ptr(user_data *p) {
 	return true;
 }
 
+static void remove_usr_by_index(size_t index) {
+	close(users.conns->arr[index].fd);
+	users.conns->arr[index].fd = -1;
+}
+
 static void users_init(size_t capacity) {
 	vec_init(&users.data, capacity);
 	vec_init(&users.conns, capacity);
@@ -327,11 +333,17 @@ static void listen_and_serve(pollfd_vec *sockets) {
 		}
 
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
+			user_data *u = &users.data->arr[i];
+			int conn = users.conns->arr[i].fd;
+			short events = users.conns->arr[i].revents;
+
+			/* keep-alive */
+			if (u->CONNECT_recieved && u->keep_alive != 0
+			    && time(NULL) - u->keepalive_timestamp > (u->keep_alive * 3) / 2)
+				goto close_sock;
+
 			if (users.conns->arr[i].fd == -1)
 				continue;
-
-			short events = users.conns->arr[i].revents;
-			int conn = users.conns->arr[i].fd;
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
@@ -351,8 +363,7 @@ static void listen_and_serve(pollfd_vec *sockets) {
 			case POLLHUP | POLLIN | POLLERR:
 				dwarnx(RED("error") " on connection %d - closing", conn);
 close_sock:
-				close(users.conns->arr[i].fd);
-				users.conns->arr[i].fd = -1;
+				remove_usr_by_index(i);
 				break;
 			case 0:
 				break;
@@ -363,9 +374,9 @@ close_sock:
 				      events);
 #endif
 			}
-		}
 
-		users_clean();
+			users_clean();
+		}
 	}
 }
 

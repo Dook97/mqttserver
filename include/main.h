@@ -26,6 +26,7 @@ typedef struct {
 	 * 0 means no timeout
 	 */
 	uint16_t keep_alive;
+	time_t keepalive_timestamp;
 	char client_id[CLIENT_ID_MAXLEN + 1]; // +1 for 0 terminator
 	str_vec *subscriptions;
 } user_data;

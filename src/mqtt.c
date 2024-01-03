@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "mqtt.h"
@@ -163,7 +164,6 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	usr->keep_alive = read_uint16(++read_head);
 	read_head += 2;
 
-	// TODO: setup a keep alive timer somehow
 
 	// 10B read so far + 2B for the utf8 string header
 	ssize_t identifier_len = validate_clientid(hdr->remaining_length - 12, read_head);
@@ -185,7 +185,8 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	read_head += 2;
 
 	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
-	remove_usr_by_id((char *)read_head);
+	if (remove_usr_by_id((char *)read_head))
+		DPRINTF("a user with matching id found - will be disconnected\n");
 
 	/* store the userid string into the new client */
 	memcpy(usr->client_id, read_head, identifier_len);
@@ -199,7 +200,8 @@ finish:
 		dwarnx(MAGENTA("CONNECT") " packet parsing " RED("FAILED"));
 		return false;
 	}
-	return send_connack(conn, connack_ret) && connack_ret == CONNECTION_ACCEPTED;
+	int retval = send_connack(conn, connack_ret) && connack_ret == CONNECTION_ACCEPTED;
+	return retval;
 }
 
 static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
@@ -338,6 +340,8 @@ bool process_packet(int conn, user_data *usr) {
 		dwarnx(RED("CLOSING") " connection %d due to a malformed packet", conn);
 		remove_usr_by_ptr(usr);
 	}
+
+	time(&usr->keepalive_timestamp);
 
 	return true;
 }
