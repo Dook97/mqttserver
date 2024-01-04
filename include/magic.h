@@ -1,16 +1,9 @@
 #ifndef MAGIC_H_
 #define MAGIC_H_
 
-#include <stdio.h>
 #include <err.h>
-
-#define USER_ERR 1
-#define SERVER_ERR 2
-#define NO_SOCKET 126
-#define NO_MEMORY 127
-
-#define MQTT_DEFAULT_PORT "1883"
-#define CLIENT_ID_MAXLEN 23
+#include <signal.h>
+#include <stdio.h>
 
 // block signals
 #define SIG_PROTECT_BEGIN                                                                       \
@@ -19,7 +12,7 @@
 		sigset_t SIG_PROTECT__oldmask;                                                  \
 		sigfillset(&SIG_PROTECT__mask);                                                 \
                                                                                                 \
-		/* blocking these is a BAD idea */                                              \
+		/* blocking these is a bad idea */                                              \
 		sigdelset(&SIG_PROTECT__mask, SIGBUS);                                          \
 		sigdelset(&SIG_PROTECT__mask, SIGFPE);                                          \
 		sigdelset(&SIG_PROTECT__mask, SIGILL);                                          \
@@ -88,8 +81,5 @@
 		fprintf(stderr, "[" YELLOW("WARNX") " " __FILE__ ":" str(__LINE__) "] "); \
 		warnx(__VA_ARGS__);                                                       \
 	} while (0)
-
-/* server exit code */
-extern int server_exit;
 
 #endif

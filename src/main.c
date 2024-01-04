@@ -1,22 +1,14 @@
 #include <assert.h>
-#include <err.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <netdb.h>
 #include <signal.h>
-#include <stdbool.h>
-#include <stdio.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "main.h"
 #include "mqtt.h"
-
-/* server exit code */
-int server_exit = 0;
+#include "magic.h"
 
 #ifdef DEBUG
 /* buffer for debug prints */
@@ -30,6 +22,7 @@ users_t users = {
 
 static int sock = -1;
 
+/* for use with atexit() */
 static void cleanup(void) {
 	DPRINTF("Entering cleanup...\n");
 
@@ -51,15 +44,14 @@ static void cleanup(void) {
 
 static void sigint_handler(int sig) {
 	dwarnx("SIGINT intercepted");
-	dwarnx("Exiting due to SIGINT with exit code %d", server_exit);
+	dwarnx("Exiting due to SIGINT with exit code %d", SIGINT_EXIT);
 
 	// cleanup() will be called automatically
-	exit(server_exit);
+	exit(SIGINT_EXIT);
 
 	(void)sig;
 }
 
-/* A wrapper around read() which blocks until it reads nbytes or there are no more data to be read from fd. */
 ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
 	ssize_t nread = 0;
 	struct pollfd pfd = {.fd = fd, .events = POLLIN, .revents = 0};
@@ -77,9 +69,14 @@ ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
 		if (nread == (ssize_t)nbytes)
 			return nread;
 
+		if (timeout < 0)
+			continue;
+
 		/* if no data becomes available in timeout millis fail the call */
+		errno = 0;
 		poll(NULL, 0, timeout);
-		if (poll(&pfd, 1, 0) == -1)
+		poll(&pfd, 1, 0);
+		if (errno != 0)
 			dwarn("poll");
 		if (!(pfd.revents & POLL_IN)) {
 			dwarnx("timed out trying to read from %d", fd);
@@ -205,6 +202,7 @@ end:
 	return sock_;
 }
 
+/* Add a new user to the global vector of users. */
 static void users_append(user_data *data, int connection) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
@@ -234,19 +232,40 @@ static void users_append(user_data *data, int connection) {
 	assert(users.data->nmemb == users.conns->nmemb);
 }
 
-static void remove_usr_by_index(size_t index, bool gracefully) {
-	if (users.conns->arr[index].fd == -1)
+/* Mark user at index as removed. The user shouldn't be accessed after calling this.
+ *
+ * @param index Index in the global users vector.
+ * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
+ * should be sent.
+ */
+static void mark_usr_removed(size_t index, bool gracefully) {
+	int *conn = &users.conns->arr[index].fd;
+
+	if (*conn == -1)
 		return;
+
+	user_data *u = &users.data->arr[index];
+	str_vec *subs = u->subscriptions;
+
+	for (size_t i = 0; i < subs->nmemb; ++i)
+		free(subs->arr[i]);
+	free(u->subscriptions);
 
 	if (gracefully) {
 		struct linger lopt = {.l_onoff = 1, .l_linger = 3};
-		setsockopt(users.conns->arr[index].fd, SOL_SOCKET, SO_LINGER, &lopt, sizeof(lopt));
+		setsockopt(*conn, SOL_SOCKET, SO_LINGER, &lopt, sizeof(lopt));
 	}
 
-	close(users.conns->arr[index].fd);
-	users.conns->arr[index].fd = -1;
+	close(*conn);
+	*conn = -1;
 }
 
+/* Remove a user from the global users vector. Cleanup will be performed.
+ *
+ * @param index Index in the global users vector.
+ * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
+ * should be sent.
+ */
 static void users_remove_at(size_t index, bool gracefully) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
@@ -254,8 +273,7 @@ static void users_remove_at(size_t index, bool gracefully) {
 
 	SIG_PROTECT_BEGIN;
 
-	remove_usr_by_index(index, gracefully);
-	free(users.data->arr[index].subscriptions);
+	mark_usr_removed(index, gracefully);
 	vec_remove_at(users.data, index);
 	vec_remove_at(users.conns, index);
 
@@ -268,6 +286,7 @@ static void users_remove_at(size_t index, bool gracefully) {
 	assert(users.data->nmemb == users.conns->nmemb);
 }
 
+/* Remove users marked by mark_usr_removed from the global users vector. */
 static void users_clean(void) {
 	for (size_t i = 0; i < users.data->nmemb;) {
 		if (users.conns->arr[i].fd == -1)
@@ -277,27 +296,31 @@ static void users_clean(void) {
 	}
 }
 
-bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1], bool gracefully) {
+bool remove_usr_by_id(char *id, bool gracefully) {
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
 		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN)) {
 			if (users.conns->arr[i].fd == -1)
 				return false;
 
-			remove_usr_by_index(i, gracefully);
+			mark_usr_removed(i, gracefully);
 			return true;
 		}
 	}
 	return false;
 }
 
-bool remove_usr_by_ptr(user_data *p, bool gracefully) {
-	ssize_t index = p - users.data->arr;
+bool remove_usr_by_ptr(user_data *usr, bool gracefully) {
+	ssize_t index = usr - users.data->arr;
 	if (index < 0 || (size_t)index > users.data->nmemb || users.conns->arr[index].fd == -1)
 		return false;
-	remove_usr_by_index(index, gracefully);
+	mark_usr_removed(index, gracefully);
 	return true;
 }
 
+/* initialize the global users vector
+ *
+ * @param capacity Initial capacity of the vector.
+ */
 static void users_init(size_t capacity) {
 	vec_init(&users.data, capacity);
 	vec_init(&users.conns, capacity);
@@ -305,6 +328,10 @@ static void users_init(size_t capacity) {
 		derr(NO_MEMORY, "malloc");
 }
 
+/* Check if there are any new connections pending and if so accept them
+ *
+ * @param sock The socket from which the connections are to be accepted.
+ */
 static void accept_new_connections(int sock) {
 	errno = 0;
 	struct pollfd pfd = {.fd = sock, .events = POLLIN};
@@ -325,6 +352,28 @@ static void accept_new_connections(int sock) {
 	}
 }
 
+/* check whether user exceeded his keep-alive period and if he did, disconnect him
+ *
+ * @retval true if client was disconnected else false
+ */
+static bool handle_keepalive(user_data *u, time_t now) {
+	if (u->CONNECT_recieved && u->keep_alive != 0
+	    && now - u->keepalive_timestamp > (u->keep_alive * 3) / 2) {
+		dwarnx("keep alive period expired for user " MAGENTA("'%s'\n"), u->client_id);
+		/* sending TCP RST as per [MQTT-3.1.2-24] */
+		remove_usr_by_ptr(u, false);
+		return true;
+	}
+	return false;
+}
+
+/* Main program loop.
+ *
+ * Accepts new connections, checks if any of the connections have available data then calls the
+ * proper handlers or removes closed/erroneous connections etc.
+ *
+ * @param sock The socket from which the connections are to be accepted.
+ */
 static void listen_and_serve(int sock) {
 	if (listen(sock, SOMAXCONN))
 		derr(SERVER_ERR, "listen");
@@ -341,42 +390,47 @@ static void listen_and_serve(int sock) {
 			continue;
 		}
 
+		time_t now = time(NULL);
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
 			user_data *u = &users.data->arr[i];
 			int conn = users.conns->arr[i].fd;
 			short events = users.conns->arr[i].revents;
 
-			if (conn == -1)
+			if (!(events & POLL_IN) && handle_keepalive(u, now))
 				continue;
 
-			/* keep-alive */
-			if (u->CONNECT_recieved && u->keep_alive != 0
-			    && time(NULL) - u->keepalive_timestamp > (u->keep_alive * 3) / 2) {
-				dwarnx("user %s has exceeded his keep-alive timeout of %d - disconnecting",
-				       u->client_id, u->keep_alive);
-				remove_usr_by_index(i, true);
+			/* users with conn == -1 were marked as invalid, so skip them - we'll remove
+			 * them later */
+			if (conn == -1)
 				continue;
-			}
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
 			case POLLIN:
-				if (!process_packet(conn, &users.data->arr[i])) {
+				switch (process_packet(conn, &users.data->arr[i])) {
+				case CLOSE:
 					dwarnx("error when processing packet - closing connection");
-					remove_usr_by_index(i, false);
+					mark_usr_removed(i, false);
+					break;
+				case CLOSE_GRACEFULLY:
+					mark_usr_removed(i, true);
+					break;
+				case KEEP:
+					time(&u->keepalive_timestamp); // update keep-alive
+					break;
 				}
 				break;
 			case POLLHUP:
 			case POLLHUP | POLLIN:
 				DPRINTF("connection %d terminated by client\n", conn);
-				remove_usr_by_index(i, true);
+				mark_usr_removed(i, true);
 				break;
 			case POLLERR:
 			case POLLERR | POLLIN:
 			case POLLERR | POLLHUP:
 			case POLLHUP | POLLIN | POLLERR:
 				dwarnx(RED("error") " on connection %d - closing", conn);
-				remove_usr_by_index(i, false);
+				mark_usr_removed(i, false);
 				break;
 			case 0:
 				break;
@@ -393,6 +447,7 @@ static void listen_and_serve(int sock) {
 	}
 }
 
+/* helper function to setup atexit and signal handlers */
 static void prepare_cleanup(void) {
 	struct sigaction sa = {.sa_handler = sigint_handler};
 	sigemptyset(&sa.sa_mask);

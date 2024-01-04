@@ -3,10 +3,6 @@
 
 /* Constants and definitions as per MQTT v3.1.1 */
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-
 #include "main.h"
 
 #define MESSAGE_MAX_LEN 2046
@@ -60,6 +56,13 @@ enum suback_code {
 	FAILURE = 0x80,
 };
 
+/* to be returned by process_packet_handler() in mqtt.c */
+enum packet_action {
+	CLOSE,
+	CLOSE_GRACEFULLY,
+	KEEP,
+};
+
 /* except for PUBLISH all control packets have the flags field predefined
  * for PUBLISH these have the following meaning:
  * 	- 3 (msb) = DUP = Duplicate delivery of a PUBLISH Control Packet
@@ -91,8 +94,21 @@ typedef struct {
 	int32_t remaining_length;
 } fixed_header;
 
+/* functions for handling distinct packet types
+ *
+ * @retval false if the packet was malformed, true otherwise
+ */
 typedef bool (*packet_handler)(const fixed_header *h, user_data *u, const char *packet, int conn);
 
-bool process_packet(int conn, user_data *u);
+/* To be called on a connection which has data ready for reading (ie. we expect to recieve an MQTT
+ * packet).
+ *
+ * Reads and verifies the MQTT packet and performs any actions required.
+ *
+ * @param conn The TCP connection file descriptor.
+ * @param usr Pointer to the data of the user in question.
+ * @retval enum describing action to be taken by the caller
+ */
+enum packet_action process_packet(int conn, user_data *usr);
 
 #endif
