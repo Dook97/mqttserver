@@ -23,7 +23,7 @@ int server_exit = 0;
 static char dbuf[4096];
 #endif
 
-static users_t users = {
+users_t users = {
 	.data = NULL,
 	.conns = NULL,
 };
@@ -31,6 +31,8 @@ static users_t users = {
 static int sock = -1;
 
 static void cleanup(void) {
+	DPRINTF("Entering cleanup...\n");
+
 	if (sock != -1 && close(sock) == -1)
 		dwarn("failed to close socket %d", sock);
 
@@ -55,6 +57,35 @@ static void sigint_handler(int sig) {
 	exit(server_exit);
 
 	(void)sig;
+}
+
+/* A wrapper around read() which blocks until it reads nbytes or there are no more data to be read from fd. */
+ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
+	ssize_t nread = 0;
+	struct pollfd pfd = {.fd = fd, .events = POLLIN, .revents = 0};
+
+	while (true) {
+		ssize_t loop_nread = 0;
+		loop_nread = read(fd, buf + nread, nbytes - nread);
+
+		if (loop_nread == -1)
+			return -1;
+		if (loop_nread == 0)
+			return nread;
+
+		nread += loop_nread;
+		if (nread == (ssize_t)nbytes)
+			return nread;
+
+		/* if no data becomes available in timeout millis fail the call */
+		poll(NULL, 0, timeout);
+		if (poll(&pfd, 1, 0) == -1)
+			dwarn("poll");
+		if (!(pfd.revents & POLL_IN)) {
+			dwarnx("timed out trying to read from %d", fd);
+			return -1;
+		}
+	}
 }
 
 /* Parse commandline arguments.

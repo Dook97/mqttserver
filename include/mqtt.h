@@ -9,7 +9,7 @@
 
 #include "main.h"
 
-#define MESSAGE_MAX_LEN 1024
+#define MESSAGE_MAX_LEN 2046
 
 /* revision number of the MQTT protocol - we only support this one */
 #define PROTOCOL_LEVEL 4

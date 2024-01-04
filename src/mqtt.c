@@ -8,6 +8,11 @@
 #include "mqtt.h"
 #include "magic.h"
 
+/* Read a 2B big-endian unsigned integer from buffer buf.
+ *
+ * @param buf Read buffer.
+ * @return The read integer.
+ */
 static uint16_t read_uint16(const unsigned char buf[static 2]) {
 	return ((uint16_t)buf[0] << 8) + (uint16_t)buf[1];
 }
@@ -15,7 +20,7 @@ static uint16_t read_uint16(const unsigned char buf[static 2]) {
 /* Verify whether a string is valid w.r.t. the MQTT specification
  *
  * Conditions:
- *	- strlen(str) <= UINT16_MAX
+ *	- strlen(buf) <= UINT16_MAX
  *	- mustn't include codepoints U+D800..U+DFFF
  *	- mustn't include U+0000
  *	- shouldn't include U+0001..U+001F or U+007F..U+009F
@@ -23,15 +28,17 @@ static uint16_t read_uint16(const unsigned char buf[static 2]) {
  *
  * This function doesn't check all of these.
  *
- * @retval true If valid.
- * @retval false If invalid.
+ * @param maxlen Size of the buffer.
+ * @param buf The buffer from which to read the string.
+ * @return The size of the string, not including the initial 2B which encode its stated length.
+ * @retval -1 if
  */
-static ssize_t validate_str(const size_t maxlen, const unsigned char str[static maxlen]) {
-	uint16_t len = read_uint16(str);
-	if (len > maxlen)
+static ssize_t validate_str(const size_t bufsize, const unsigned char buf[static bufsize]) {
+	uint16_t len = read_uint16(buf);
+	if (len > bufsize || len > UINT16_MAX)
 		return -1;
 
-	for (const unsigned char *head = str + 2; head < str + 2 + len; ++head)
+	for (const unsigned char *head = buf + 2; head < buf + 2 + len; ++head)
 		if (*head < ' ' || *head == 0x7f)
 			return -1;
 
@@ -43,13 +50,9 @@ static ssize_t validate_topic(const size_t maxlen, const unsigned char str[stati
 	if (len < 1)
 		return -1;
 
-	/* [MQTT-4.7.2-1] */
-	if (*(str + 2) == '$')
-		return -1;
-
-	for (const unsigned char *head = str + 2; head < str + 2 + len; ++head) {
+	str += 2;
+	for (const unsigned char *head = str; head < str + len; ++head) {
 		switch (*head) {
-		case '/':
 		case '#':
 		case '+':
 			return -1;
@@ -82,11 +85,13 @@ static ssize_t validate_clientid(const size_t maxlen, const unsigned char str[st
  */
 static int32_t decode_remaining_length(int conn) {
 	int32_t output = 0;
-	int32_t buf = 0;
-	int nread = 0;
-	for (; nread < 4; ++nread) {
-		if (read(conn, &buf, 1) < 1)
+	char buf = 0;
+	for (int nread = 0; nread < 4; ++nread) {
+		ssize_t loop_nread = readn(conn, 1, &buf, POLL_TIMEOUT);
+		if (loop_nread == 0)
 			break;
+		if (loop_nread == -1)
+			return -1;
 
 		output |= (buf & 0x7f) << (nread * 7);
 
@@ -141,7 +146,7 @@ static int send_connack(const int conn, const char code) {
 }
 
 static bool connect_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
-	DPRINTF("User sent a " MAGENTA("CONNECT") " packet\n");
+	DPRINTF("User (conn %d) sent a " MAGENTA("CONNECT") " packet\n", conn);
 
 	assert(!usr->CONNECT_recieved);
 	usr->CONNECT_recieved = true;
@@ -218,8 +223,67 @@ finish:
 	return send_connack(conn, connack_ret) && connack_ret == CONNECTION_ACCEPTED;
 }
 
-static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
+static bool is_subscribed(user_data *u, size_t topic_len, const char topic[static topic_len]) {
+	str_vec *subs = u->subscriptions;
+	for (size_t i = 0; i < subs->nmemb; ++i) {
+		if (!strncmp(topic, subs->arr[i], topic_len))
+			return true;
+	}
 	return false;
+}
+
+static void send_publish(const int_vec *subscribers, size_t packet_len,
+				const char packet[static packet_len]) {
+	char fixed_header[5] = {'\x30'};
+	int encode_ret = encode_remaining_length(packet_len, fixed_header + 1);
+	if (encode_ret == -1)
+		derrx(SERVER_ERR,
+		      "failed to encode remaining length of server packet - this should never happen");
+
+	const int hdr_len = encode_ret + 1;
+	const size_t total_len = hdr_len + packet_len;
+
+	for (size_t i = 0; i < subscribers->nmemb; ++i) {
+		ssize_t nwritten = 0;
+		const int conn = subscribers->arr[i];
+		nwritten += write(conn, fixed_header, hdr_len);
+		nwritten += write(conn, packet, packet_len);
+		if ((size_t)nwritten != total_len)
+			dwarnx(RED("FAILED") " to properly send " MAGENTA("PUBLISH")
+			       "packet to subscriber (connection %d)", conn);
+	}
+}
+
+static bool publish_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PUBLISH") " packet\n", usr->client_id);
+
+	ssize_t len = validate_topic(hdr->remaining_length, (const unsigned char *)packet);
+	if (len == -1) {
+		dwarnx("invalid topic string");
+		return false;
+	}
+
+	int_vec *subscribers;
+	vec_init(&subscribers, 8);
+	if (subscribers == NULL)
+		derr(NO_MEMORY, "malloc");
+
+	for (size_t i = 0; i < users.data->nmemb; ++i) {
+		user_data *u = &users.data->arr[i];
+		if (is_subscribed(u, len, packet + 2)) {
+			bool vec_err = false;
+			vec_append(&subscribers, users.conns->arr[i].fd, &vec_err);
+			if (vec_err)
+				derr(NO_MEMORY, "realloc");
+		}
+	}
+
+	send_publish(subscribers, hdr->remaining_length, packet);
+
+	return true;
+
+	(void)usr;
+	(void)conn;
 }
 
 static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
@@ -271,20 +335,21 @@ static ssize_t read_topic(const unsigned char *read_head, str_vec *topics[static
 		derr(NO_MEMORY, "malloc: couldn't allocate %zuB", (string_len + 1) * sizeof(char));
 
 	new_topic[string_len] = '\0';
-	memcpy(new_topic, read_head + 2, string_len + 1);
+	memcpy(new_topic, read_head + 2, string_len);
 
 	bool vec_err = false;
 	vec_append(topics, new_topic, &vec_err);
 	if (vec_err)
 		derr(NO_MEMORY, "vec_append: couldn't allocate %luB", sizeof(char *));
 
-	unsigned char QoS = *(read_head + string_len);
+	unsigned char QoS = *(read_head + string_len + 2);
 	switch (QoS) {
 	case 0:
 	case 1:
 	case 2:
 		break;
 	default:
+		dwarnx("invalid QoS byte");
 		return -1;
 	}
 
@@ -292,7 +357,7 @@ static ssize_t read_topic(const unsigned char *read_head, str_vec *topics[static
 }
 
 static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
-	DPRINTF("User " MAGENTA("%s") " sent a " MAGENTA("SUBSCRIBE") " packet\n", usr->client_id);
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("SUBSCRIBE") " packet\n", usr->client_id);
 
 	unsigned char *read_head = (unsigned char *)packet;
 
@@ -354,11 +419,12 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 }
 
 static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("UNSUBSCRIBE") " packet\n", usr->client_id);
 	return false;
 }
 
 static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
-	DPRINTF("User " MAGENTA("%s") " sent a " MAGENTA("PING") " packet; PONG!\n", usr->client_id);
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PING") " packet; PONG!\n", usr->client_id);
 
 	/* send PINGRESP */
 	const char response[2] = {'\xd0', '\x00'};
@@ -370,7 +436,7 @@ static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char 
 }
 
 static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
-	DPRINTF("User " MAGENTA("%s") " sent a " MAGENTA("DISCONNECT") " packet\n", usr->client_id);
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("DISCONNECT") " packet\n", usr->client_id);
 
 	return remove_usr_by_ptr(usr, true);
 
@@ -385,8 +451,8 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		return NULL;
 	}
 
-	if (hdr->remaining_length > MAX_MESSAGE_LEN) {
-		dwarnx("Message too large (max: %d, message is: %d)", MAX_MESSAGE_LEN,
+	if (hdr->remaining_length > MESSAGE_MAX_LEN) {
+		dwarnx("Message too large (max: %d, message is: %d)", MESSAGE_MAX_LEN,
 		       hdr->remaining_length);
 		return NULL;
 	}
@@ -454,7 +520,7 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 
 bool process_packet(int conn, user_data *usr) {
 	char initial;
-	ssize_t nread = read(conn, &initial, 1);
+	ssize_t nread = readn(conn, 1, &initial, POLL_TIMEOUT);
 	if (nread == 0) {
 		DPRINTF("client closed connection\n");
 		remove_usr_by_ptr(usr, true);
@@ -480,8 +546,8 @@ bool process_packet(int conn, user_data *usr) {
 		return false;
 	}
 
-	char message_buf[MAX_MESSAGE_LEN];
-	nread = read(conn, message_buf, hdr.remaining_length);
+	char message_buf[MESSAGE_MAX_LEN];
+	nread = readn(conn, hdr.remaining_length, message_buf, POLL_TIMEOUT);
 	if (nread != hdr.remaining_length) {
 		dwarnx("client didn't send enough data; expected: %u, got: %zd", hdr.remaining_length, nread);
 		return false;

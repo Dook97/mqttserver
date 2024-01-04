@@ -10,7 +10,6 @@
 #include "magic.h"
 
 #define POLL_TIMEOUT 50 // milisecs
-#define MAX_MESSAGE_LEN 2048 // not counting the fixed header
 
 typedef struct {
 	char *port;
@@ -39,10 +38,13 @@ typedef struct {
 	pollfd_vec *conns;
 } users_t;
 
+extern users_t users;
+
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 		   socklen_t addrlen);
 
 bool remove_usr_by_id(char id[static CLIENT_ID_MAXLEN + 1], bool gracefully);
 bool remove_usr_by_ptr(user_data *p, bool gracefully);
+ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout);
 
 #endif
