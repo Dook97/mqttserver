@@ -345,13 +345,14 @@ static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
  * @param buf Read buffer.
  * @param buflen Length of the buffer.
  * @param topics A vector to which to append the topic.
- * @retval Length of the topic string, including the 3B of metadata.
+ * @param with_QoS Whether a QoS byte follows the string data.
+ * @retval Length of the topic string, including the 2B of length and possibly a QoS byte.
  */
 static ssize_t read_topic(size_t buflen, const unsigned char buf[static buflen],
-			  str_vec *topics[static 1]) {
+			  str_vec *topics[static 1], bool with_QoS) {
 	ssize_t string_len = validate_topic(buflen, buf);
 	/* +2 for utf8 string length bytes +1 for QoS byte */
-	const size_t topic_len = string_len + 3;
+	const size_t topic_len = string_len + 2 + (with_QoS ? 1 : 0);
 	if (string_len == -1 || topic_len > buflen)
 		return -1;
 
@@ -367,17 +368,19 @@ static ssize_t read_topic(size_t buflen, const unsigned char buf[static buflen],
 	if (vec_err)
 		derr(NO_MEMORY, "vec_append: couldn't allocate %luB", sizeof(char *));
 
-	unsigned char QoS = *(buf + string_len + 2);
-	switch (QoS) {
-	case 0:
-	case 1:
-	case 2:
-		break;
-	default:
-		dwarnx("invalid QoS byte in topic string");
-		vec_pop(*topics);
-		free(new_topic);
-		return -1;
+	if (with_QoS) {
+		unsigned char QoS = *(buf + string_len + 2);
+		switch (QoS) {
+		case 0:
+		case 1:
+		case 2:
+			break;
+		default:
+			dwarnx("invalid QoS byte in topic string");
+			vec_pop(*topics);
+			free(new_topic);
+			return -1;
+		}
 	}
 
 	return topic_len;
@@ -388,10 +391,11 @@ static ssize_t read_topic(size_t buflen, const unsigned char buf[static buflen],
  *
  * @param buflen Length of the buffer.
  * @param buf The buffer.
+ * @param with_QoS Whether a QoS byte follows the string data.
  * @retval vector of topics as null terminated strings
  * @returns NULL on failure
  */
-static str_vec *extract_topics(size_t buflen, const unsigned char buf[static buflen]) {
+static str_vec *extract_topics(size_t buflen, const unsigned char buf[static buflen], bool with_QoS) {
 	str_vec *topics;
 	vec_init(&topics, 8);
 	if (topics == NULL)
@@ -400,14 +404,14 @@ static str_vec *extract_topics(size_t buflen, const unsigned char buf[static buf
 	const unsigned char *read_head = buf;
 
 	while (read_head < buf + buflen) {
-		ssize_t nread = read_topic(buflen - (read_head - buf), read_head, &topics);
+		ssize_t nread = read_topic(buflen - (read_head - buf), read_head, &topics, with_QoS);
 
 		/* the MQTT spec actually requires us to gracefully reject the subscription if it is
 		 * a valid topic string containing a wildcard character, but we're too lazy to
 		 * check, so just kill em ;p
 		 */
 		if (nread == -1) {
-			dwarnx("bad topic string in SUBSCRIBE packet");
+			dwarnx("bad topic string");
 			for (size_t i = 0; i < topics->nmemb; ++i)
 				free(topics->arr[i]);
 			free(topics);
@@ -434,7 +438,7 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 		return false;
 	}
 
-	str_vec *topics = extract_topics(hdr->remaining_length - 2, read_head);
+	str_vec *topics = extract_topics(hdr->remaining_length - 2, read_head, true);
 	if (topics == NULL) {
 		dwarnx("couldn't read topics");
 		return false;
@@ -442,10 +446,12 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 
 	/* at least one topic must be present [MQTT-3.8.3-3] */
 	if (topics->nmemb == 0) {
+		dwarnx(MAGENTA("SUBSCRIBE") " packet contains no topics");
 		free(topics);
 		return false;
 	}
 
+	/* copy the subscription topics over to the user's list */
 	for (size_t i = 0; i < topics->nmemb; ++i) {
 		bool present = false;
 		for (size_t j = 0; j < usr->subscriptions->nmemb; ++j) {
@@ -453,6 +459,7 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 				dwarnx("User " MAGENTA("'%s'")
 				       " trying to subscribe to an already subscribed-to topic (%s)",
 				       usr->client_id, topics->arr[i]);
+				free(topics->arr[i]);
 				present = true;
 				break;
 			}
@@ -476,11 +483,58 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 	return send_suback(nsubs, packet_identifier, conn);
 }
 
+static bool send_unsuback(int conn, uint16_t packet_identifier) {
+	/* see
+	 * Figure 3.31 - UNSUBACK Packet fixed header
+	 * and
+	 * Figure 3.32 - UNSUBACK Packet variable header
+	 */
+	char response[4] = { '\xb0', '\x02', (char)packet_identifier >> 8, (char)packet_identifier & 0xff};
+	return write(conn, response, 4) == 4;
+}
+
 static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("UNSUBSCRIBE") " packet\n", usr->client_id);
 
-	// TODO: implement ;p
-	return false;
+	uint16_t packet_identifier = read_uint16((unsigned char *)packet);
+
+	str_vec *unsubs = extract_topics(hdr->remaining_length - 2, (unsigned char *)packet + 2, false);
+
+	if (unsubs == NULL) {
+		dwarnx("couldn't read topics");
+		return false;
+	}
+
+	if (unsubs->nmemb == 0) {
+		dwarnx(MAGENTA("UNSUBSCRIBE") " packet contains no topics");
+		free(unsubs);
+		return false;
+	}
+
+	/* remove matching subscriptions */
+	str_vec *subs = usr->subscriptions;
+	for (ssize_t i = usr->subscriptions->nmemb - 1; i >= 0; --i) {
+		for (size_t j = 0; j < unsubs->nmemb; ++j) {
+			if (!strcmp(subs->arr[i], unsubs->arr[j])) {
+				DPRINTF("removing subscription " MAGENTA("'%s'")
+					" for user " MAGENTA("'%s'"), unsubs->arr[i], usr->client_id);
+				free(subs->arr[i]);
+				vec_remove_at(subs, i);
+				break;
+			}
+		}
+	}
+
+	for (size_t i = 0; i < unsubs->nmemb; ++i)
+		free(unsubs->arr[i]);
+	free(unsubs);
+
+	DPRINTF("UNSUBSCRIBE packet parsed " GREEN("SUCCESSFULLY\n"));
+	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->client_id);
+	for (size_t i = 0; i < usr->subscriptions->nmemb; ++i)
+		DPRINTF("\ttopic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
+
+	return send_unsuback(conn, packet_identifier);
 }
 
 static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
