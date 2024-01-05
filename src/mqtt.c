@@ -637,14 +637,19 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 }
 
 enum packet_action process_packet(int conn, user_data *usr) {
+	char *message_buf = NULL;
+	enum packet_action retval = CLOSE;
+
 	char initial;
 	ssize_t nread = readn(conn, 1, &initial, READ_TIMEOUT);
 	if (nread == 0) {
 		DPRINTF("client closed connection\n");
-		return CLOSE_GRACEFULLY;
+		retval = CLOSE_GRACEFULLY;
+		goto end;
 	} else if (nread == -1) {
 		dwarnx("connection error");
-		return CLOSE;
+		retval = CLOSE;
+		goto end;
 	}
 	assert(nread == 1);
 
@@ -660,11 +665,12 @@ enum packet_action process_packet(int conn, user_data *usr) {
 	packet_handler handler = verify_fixed_header(&hdr, usr);
 	if (handler == NULL) {
 		dwarnx("invalid fixed header");
-		return CLOSE;
+		retval = CLOSE;
+		goto end;
 	}
 
-	char *message_buf = malloc(hdr.remaining_length);
-	if (message_buf== NULL)
+	message_buf = malloc(hdr.remaining_length);
+	if (hdr.remaining_length != 0 && message_buf == NULL)
 		derr(NO_MEMORY, "failed allocating storage (%uB) for packet buffer",
 		     hdr.remaining_length);
 
@@ -672,13 +678,20 @@ enum packet_action process_packet(int conn, user_data *usr) {
 	if (nread != hdr.remaining_length) {
 		dwarnx("client didn't send enough data; expected: %u, got: %zd",
 		       hdr.remaining_length, nread);
-		return CLOSE;
+		retval = CLOSE;
+		goto end;
 	}
 
 	if (!handler(&hdr, usr, message_buf, conn)) {
 		dwarnx(RED("CLOSING") " connection %d due to a malformed packet", conn);
-		return CLOSE;
+		retval = CLOSE;
+		goto end;
+	} else {
+		retval = KEEP;
+		goto end;
 	}
 
-	return KEEP;
+end:
+	free(message_buf);
+	return retval;
 }
