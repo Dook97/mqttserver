@@ -125,9 +125,8 @@ err:
 
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
 			  socklen_t addrlen) {
-	// FIXME: Overkill - find some handy POSIX macros for these
-	char stripaddr[4096];
-	char strport[4096];
+	char stripaddr[INET6_ADDRSTRLEN];
+	char strport[6]; // max port number is 65535, so 5 chars + null terminator
 	getnameinfo(addr, addrlen, stripaddr, sizeof(stripaddr), strport, sizeof(strport),
 		    NI_NUMERICHOST | NI_NUMERICSERV);
 	snprintf(dest, bufsize, addr->sa_family == AF_INET6 ? "[%s]:%s" : "%s:%s", stripaddr, strport);
