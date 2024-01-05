@@ -94,7 +94,6 @@
 	 * @param vec Pointer to user's pointer to the vector.                           \
 	 * @param newcap Desired capacity.                                               \
 	 * @param error Pointer to a boolean signifying error.                           \
-	 *                                                                               \
 	 */                                                                              \
 	do {                                                                             \
 		const size_t vec_trunc__membsize = sizeof((*(vec))->arr[0]);             \

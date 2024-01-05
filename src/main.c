@@ -102,8 +102,7 @@ static int parse_args(int argc, char *argv[static 1], args out[static 1]) {
 			if (*endptr != '\0')
 				goto err;
 			if (port > UINT16_MAX || port < 1) {
-				fprintf(stderr, "A port number must be in range 1-%d\n",
-					UINT16_MAX);
+				dwarnx("A port number must be in range 1-%d\n", UINT16_MAX);
 				goto err;
 			}
 			out->port = optarg;
@@ -119,8 +118,7 @@ static int parse_args(int argc, char *argv[static 1], args out[static 1]) {
 	return 0;
 
 err:
-	fprintf(stderr, "Usage: mqttserver [-p PORT]\n");
-	return 1;
+	derrx(USER_ERR, "Usage: mqttserver [-p PORT]\n");
 }
 
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
@@ -141,7 +139,7 @@ char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[stat
  * @return Vector of properly configured sockets (as pollfd structs).
  * @retval NULL On some types of failure.
  */
-static int bind_sockets(const char *port, int ai_family) {
+static int bind_socket(const char *port, int ai_family) {
 	int sock_ = -1;
 
 	struct addrinfo *res = NULL;
@@ -334,7 +332,8 @@ static void users_init(size_t capacity) {
 static void accept_new_connections(int sock) {
 	errno = 0;
 	struct pollfd pfd = {.fd = sock, .events = POLLIN};
-	while (poll(&pfd, 1, 0), pfd.revents & POLLIN) {
+	int pollret = 0;
+	while ((pollret = poll(&pfd, 1, 0)) != -1 && pfd.revents & POLLIN) {
 		user_data u = {.addrlen = sizeof(struct sockaddr_storage)};
 		int conn = accept(sock, (struct sockaddr *)&u.addr, &u.addrlen);
 
@@ -349,6 +348,8 @@ static void accept_new_connections(int sock) {
 			break;
 		}
 	}
+	if (pollret == -1)
+		dwarn("poll");
 }
 
 /* check whether user exceeded his keep-alive period and if he did, disconnect him
@@ -467,10 +468,10 @@ int main(int argc, char **argv) {
 		derrx(USER_ERR, "Failed to parse commandline arguments");
 
 	// first try with ipv6 - if successful ipv4 addresses will be mapped to ipv6
-	sock = bind_sockets(args.port, AF_INET6);
+	sock = bind_socket(args.port, AF_INET6);
 	if (sock == -1) {
 		dwarnx("Unable to bind a wildcard socket - falling back to IPv4");
-		sock = bind_sockets(args.port, AF_INET);
+		sock = bind_socket(args.port, AF_INET);
 	}
 	if (sock == -1)
 		derrx(NO_SOCKET, "failed to bind to a socket");

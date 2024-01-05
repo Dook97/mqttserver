@@ -78,7 +78,7 @@ static ssize_t validate_clientid(const size_t buflen, const unsigned char buf[st
 
 	/* [MQTT-3.1.3-5] */
 	for (const unsigned char *head = buf + 2; head < buf + 2 + len; ++head)
-		if (!isalnum(*head))
+		if (!isgraph(*head)) // be lenient here, because why not - the spec allows it
 			return -1;
 
 	return len;
@@ -135,7 +135,7 @@ static int encode_remaining_length(uint32_t toencode, char dest[static 4]) {
 	return 4;
 }
 
-static int send_connack(const int conn, const char code) {
+static bool send_connack(const int conn, const char code) {
 	/* see Figure 3.8 - CONNACK Packet fixed header
 	 *
 	 * 1. the fixed header (2B)
@@ -196,7 +196,6 @@ static bool connect_handler(const fixed_header *hdr, user_data *usr, const char 
 	usr->keep_alive = read_uint16(++read_head);
 	read_head += 2;
 
-
 	// 10B read so far + 2B for the utf8 string header
 	ssize_t identifier_len = validate_clientid(hdr->remaining_length - 12, read_head);
 
@@ -255,14 +254,12 @@ static void send_publish(const int_vec *subscribers, size_t packet_len,
 		      "failed to encode remaining length of server packet - this should never happen");
 
 	const int hdr_len = encode_ret + 1;
-	const size_t total_len = hdr_len + packet_len;
 
 	for (size_t i = 0; i < subscribers->nmemb; ++i) {
-		ssize_t nwritten = 0;
 		const int conn = subscribers->arr[i];
-		nwritten += write(conn, fixed_header, hdr_len);
-		nwritten += write(conn, packet, packet_len);
-		if ((size_t)nwritten != total_len)
+
+		if (write(conn, fixed_header, hdr_len) != hdr_len
+		    || write(conn, packet, packet_len) != (ssize_t)packet_len)
 			dwarnx(RED("FAILED") " to properly send " MAGENTA("PUBLISH")
 			       "packet to subscriber (connection %d)", conn);
 	}
@@ -285,6 +282,8 @@ static bool publish_handler(const fixed_header *hdr, user_data *usr, const char 
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
 		user_data *u = &users.data->arr[i];
 		if (is_subscribed(u, len, packet + 2)) {
+			DPRINTF("sending a " MAGENTA("PUBLISH") " packet to user " MAGENTA("'%s'\n"),
+				u->client_id);
 			bool vec_err = false;
 			vec_append(&subscribers, users.conns->arr[i].fd, &vec_err);
 			if (vec_err)
@@ -303,7 +302,7 @@ static bool publish_handler(const fixed_header *hdr, user_data *usr, const char 
 
 static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
 	char remaining_length[4];
-	int encode_ret = encode_remaining_length(2 + nsubs, remaining_length);
+	int encode_ret = encode_remaining_length(2 + nsubs, remaining_length); // +2 for packet identifier
 	if (encode_ret == -1)
 		derrx(SERVER_ERR,
 		      "failed to encode remaining length of server packet - this should never happen");
@@ -478,7 +477,7 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 	DPRINTF("SUBSCRIBE packet parsed " GREEN("SUCCESSFULLY\n"));
 	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->client_id);
 	for (size_t i = 0; i < usr->subscriptions->nmemb; ++i)
-		DPRINTF("\ttopic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
+		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
 
 	return send_suback(nsubs, packet_identifier, conn);
 }
@@ -489,7 +488,7 @@ static bool send_unsuback(int conn, uint16_t packet_identifier) {
 	 * and
 	 * Figure 3.32 - UNSUBACK Packet variable header
 	 */
-	char response[4] = { '\xb0', '\x02', (char)packet_identifier >> 8, (char)packet_identifier & 0xff};
+	char response[4] = {'\xb0', '\x02', (char)(packet_identifier >> 8), (char)(packet_identifier & 0xff)};
 	return write(conn, response, 4) == 4;
 }
 
@@ -499,25 +498,28 @@ static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const c
 	uint16_t packet_identifier = read_uint16((unsigned char *)packet);
 
 	str_vec *unsubs = extract_topics(hdr->remaining_length - 2, (unsigned char *)packet + 2, false);
-
 	if (unsubs == NULL) {
 		dwarnx("couldn't read topics");
 		return false;
 	}
 
+	/* must contain at least one topic [MQTT-3.10.3-2] */
 	if (unsubs->nmemb == 0) {
 		dwarnx(MAGENTA("UNSUBSCRIBE") " packet contains no topics");
 		free(unsubs);
 		return false;
 	}
 
-	/* remove matching subscriptions */
+	/* remove matching subscriptions
+	 *
+	 * iterating in reverse so that we can call vec_remove_at without screwing up our indexing
+	 */
 	str_vec *subs = usr->subscriptions;
 	for (ssize_t i = usr->subscriptions->nmemb - 1; i >= 0; --i) {
 		for (size_t j = 0; j < unsubs->nmemb; ++j) {
 			if (!strcmp(subs->arr[i], unsubs->arr[j])) {
 				DPRINTF("removing subscription " MAGENTA("'%s'")
-					" for user " MAGENTA("'%s'"), unsubs->arr[i], usr->client_id);
+					" for user " MAGENTA("'%s'\n"), subs->arr[i], usr->client_id);
 				free(subs->arr[i]);
 				vec_remove_at(subs, i);
 				break;
@@ -532,7 +534,7 @@ static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const c
 	DPRINTF("UNSUBSCRIBE packet parsed " GREEN("SUCCESSFULLY\n"));
 	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->client_id);
 	for (size_t i = 0; i < usr->subscriptions->nmemb; ++i)
-		DPRINTF("\ttopic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
+		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
 
 	return send_unsuback(conn, packet_identifier);
 }
@@ -596,6 +598,8 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 */
 		if (!(hdr->flags & 0x0e) && hdr->remaining_length >= 3 && usr->CONNECT_recieved)
 			return publish_handler;
+
+		dwarnx(MAGENTA("PUBLISH") " requested QoS: %d", (hdr->flags >> 1) & 0x03);
 		break;
 	case SUBSCRIBE:
 		/* flags: see Figure 3.20 - SUBSCRIBE Packet fixed header
