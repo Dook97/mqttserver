@@ -24,7 +24,7 @@ static int sock = -1;
 
 /* for use with atexit() */
 static void cleanup(void) {
-	DPRINTF("Entering cleanup...\n");
+	DPRINTF("entering cleanup\n");
 
 	if (sock != -1 && close(sock) == -1)
 		dwarn("failed to close socket %d", sock);
@@ -254,7 +254,8 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 
 	if (gracefully) {
 		struct linger lopt = {.l_onoff = 0};
-		setsockopt(*conn, SOL_SOCKET, SO_LINGER, &lopt, sizeof(lopt));
+		if (setsockopt(*conn, SOL_SOCKET, SO_LINGER, &lopt, sizeof(lopt)))
+			dwarn("setsockopt");
 	}
 
 	close(*conn);
@@ -312,8 +313,10 @@ bool remove_usr_by_id(char *id, bool gracefully) {
 
 bool remove_usr_by_ptr(user_data *usr, bool gracefully) {
 	ssize_t index = usr - users.data->arr;
-	if (index < 0 || (size_t)index > users.data->nmemb || users.conns->arr[index].fd == -1)
+	if (index < 0 || (size_t)index > users.data->nmemb || users.conns->arr[index].fd == -1) {
+		dwarnx("Invalid user pointer passed to remove_usr_by_ptr");
 		return false;
+	}
 	mark_usr_removed(index, gracefully);
 	return true;
 }
@@ -438,12 +441,9 @@ static void listen_and_serve(int sock) {
 				break;
 			case 0:
 				break;
-#ifdef DEBUG
 			default:
-				derrx(SERVER_ERR,
-				      RED("Unexpected code path taken: ") "conn=%d flags=%d", conn,
-				      events);
-#endif
+				derrx(SERVER_ERR, RED("Unexpected code path taken: ")
+				      "conn=%d flags=%d", conn, events);
 			}
 
 			users_clean();
