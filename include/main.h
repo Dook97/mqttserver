@@ -1,7 +1,7 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
-#include <bits/stdint-uintn.h>
+#include <stdint.h>
 #include <poll.h>
 #include <sys/socket.h>
 
