@@ -55,6 +55,7 @@ static void sigint_handler(int sig) {
 ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
 	ssize_t nread = 0;
 	struct pollfd pfd = {.fd = fd, .events = POLLIN, .revents = 0};
+	struct timespec nano_timeout = {.tv_nsec = timeout * 1000}; // timeout is in millis but we want nanosecs
 
 	while (true) {
 		ssize_t loop_nread = 0;
@@ -74,7 +75,7 @@ ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
 
 		/* if no data becomes available in timeout millis fail the call */
 		errno = 0;
-		poll(NULL, 0, timeout);
+		nanosleep(&nano_timeout, NULL);
 		poll(&pfd, 1, 0);
 		if (errno != 0)
 			dwarn("poll");
