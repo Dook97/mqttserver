@@ -253,7 +253,7 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 	free(u->subscriptions);
 
 	if (gracefully) {
-		struct linger lopt = {.l_onoff = 1, .l_linger = 3};
+		struct linger lopt = {.l_onoff = 0};
 		setsockopt(*conn, SOL_SOCKET, SO_LINGER, &lopt, sizeof(lopt));
 	}
 
