@@ -145,7 +145,11 @@ static int bind_socket(const char *port, int ai_family) {
 	struct addrinfo *res = NULL;
 	struct addrinfo hints = {
 		.ai_family = ai_family,
-		.ai_flags = AI_PASSIVE, // use a wildcard IP address
+		.ai_socktype = SOCK_STREAM,
+		.ai_protocol = 6, // TCP
+		.ai_flags = AI_PASSIVE // use a wildcard IP address
+			    | AI_NUMERICSERV, // host argument to getaddrinfo shall be a string
+					      // representation of the desired port number
 	};
 
 	int errn = getaddrinfo(NULL, port, &hints, &res);
