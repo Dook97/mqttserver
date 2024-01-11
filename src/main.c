@@ -413,6 +413,9 @@ static void listen_and_serve(int sock) {
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
+			case POLLHUP | POLLIN:
+				DPRINTF("POLLHUP on connection %d, but there's still data to be read\n", conn);
+				// fallthrough
 			case POLLIN:
 				switch (process_packet(conn, &users.data->arr[i])) {
 				case CLOSE:
@@ -428,7 +431,6 @@ static void listen_and_serve(int sock) {
 				}
 				break;
 			case POLLHUP:
-			case POLLHUP | POLLIN:
 				DPRINTF("connection %d terminated by client\n", conn);
 				mark_usr_removed(i, true);
 				break;
