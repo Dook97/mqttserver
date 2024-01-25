@@ -335,25 +335,31 @@ static void users_init(size_t capacity) {
 /* Check if there are any new connections pending and if so accept them
  *
  * @param sock The socket from which the connections are to be accepted.
+ * @param timeout A timeout which is applied only once to avoid excessive syscalls when the
+ * function is called repeatedly.
  */
-static void accept_new_connections(int sock) {
+static void accept_new_connections(int sock, int timeout) {
 	errno = 0;
 	struct pollfd pfd = {.fd = sock, .events = POLLIN};
 	int pollret = 0;
-	while ((pollret = poll(&pfd, 1, 0)) != -1 && pfd.revents & POLLIN) {
+	while ((pollret = poll(&pfd, 1, timeout)) != -1 && (pfd.revents & POLLIN)) {
 		user_data u = {.addrlen = sizeof(struct sockaddr_storage)};
 		int conn = accept(sock, (struct sockaddr *)&u.addr, &u.addrlen);
 
-		if (conn != -1) {
-			DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
-				print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen),
-				conn);
-			users_append(&u, conn);
-		} else {
-			if (errno != EAGAIN)
-				dwarn("accept");
-			break;
+		if (conn == -1) {
+			dwarn("accept");
+			continue;
 		}
+
+		DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
+			print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen), conn);
+		users_append(&u, conn);
+
+		/* only wait on the first connection - this avoids potentially excessive waiting
+		 * when multiple users at once are waiting to have their connection request accepted
+		 * while also ensuring that we won't be bullying the kernel with syscalls
+		 */
+		timeout = 0;
 	}
 	if (pollret == -1)
 		dwarn("poll");
@@ -387,12 +393,12 @@ static void listen_and_serve(int sock) {
 
 	users_init(8);
 	while (true) {
-		accept_new_connections(sock);
+		do {
+			accept_new_connections(sock, POLL_TIMEOUT);
+		} while (users.conns->nmemb == 0);
 
-		if (users.conns->nmemb == 0)
-			continue;
-
-		if (poll(users.conns->arr, users.conns->nmemb, POLL_TIMEOUT) == -1) {
+		/* zero timeout is OK - we've already waited in accept_new_connections() */
+		if (poll(users.conns->arr, users.conns->nmemb, 0) == -1) {
 			dwarn("poll");
 			continue;
 		}
