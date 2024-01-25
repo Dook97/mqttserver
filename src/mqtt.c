@@ -673,8 +673,7 @@ enum packet_action process_packet(int conn, user_data *usr) {
 		goto end;
 	}
 
-	message_buf = malloc(hdr.remaining_length);
-	if (hdr.remaining_length != 0 && message_buf == NULL)
+	if (hdr.remaining_length != 0 && (message_buf = malloc(hdr.remaining_length)) == NULL)
 		derr(NO_MEMORY, "failed allocating storage (%uB) for packet buffer",
 		     hdr.remaining_length);
 
@@ -692,7 +691,6 @@ enum packet_action process_packet(int conn, user_data *usr) {
 		goto end;
 	} else {
 		retval = KEEP;
-		goto end;
 	}
 
 end:
