@@ -3,20 +3,29 @@ A simple MQTT server
 Final program for the UNIX programming in C class at MFF
 UK during winter semester 23/24.
 
-========================================================
+==========================================================
 
-`$ make` to build
-`$ make EXTERNFLAGS="-DDEBUG -DCOLOR -g"` to build in
-debug mode
+MQTT is a simple publish-subscribe network protocol. A
+server/broker recieves messages from clients and
+broadcasts them to subscribers.
 
-Only supports QoS 0 among other limitations.
+See the MQTT spec [1] for details.
+
+This project implements a less-than-minimal MQTT broker
+capable of servicing only the most basic requests. For
+example it only supports QoS 0.
+
+`$ make` - normal build
+`$ make EXTERNFLAGS="-DDEBUG -DCOLOR -g"` - debug build
 
 Just to make sure: DO NOT ACTUALLY USE THIS.
 
-This is a project for me to learn about UNIX systems
-programming (also to get a credit). Developing a
+This is a project for me to learn about UNIX systems and
+socket programming (also to get a credit). Developing a
 practically usable MQTT server is a non-goal.
 
-========================================================
+[1] docs.oasis-open.org/mqtt/mqtt/v3.1.1
+
+==========================================================
 
 Author: Jan Doskočil
