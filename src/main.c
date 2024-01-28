@@ -12,7 +12,7 @@
 
 #ifdef DEBUG
 /* buffer for debug prints */
-static char dbuf[4096];
+static char dbuf[256];
 #endif
 
 users_t users = {
@@ -92,7 +92,7 @@ ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
  * @retval 0 Success
  * @retval nonzero Failure
  */
-static int parse_args(int argc, char *argv[static 1], args out[static 1]) {
+static bool parse_args(int argc, char *argv[static 1], args out[static 1]) {
 	char *endptr = NULL;
 
 	for (int c; (c = getopt(argc, argv, "p:")) != -1;) {
@@ -100,29 +100,26 @@ static int parse_args(int argc, char *argv[static 1], args out[static 1]) {
 		case 'p': {
 			uintmax_t port = strtoumax(optarg, &endptr, 10);
 			if (*endptr != '\0')
-				goto err;
+				return false;
 			if (port > UINT16_MAX || port < 1) {
 				dwarnx("A port number must be in range 1-%d\n", UINT16_MAX);
-				goto err;
+				return false;
 			}
 			out->port = optarg;
 			break;
 		}
 		default:
-			goto err;
+			return false;
 		}
 	}
 	if (argv[optind] != NULL) // don't allow trailing args
-		goto err;
+		return false;
 
-	return 0;
-
-err:
-	derrx(USER_ERR, "Usage: mqttserver [-p PORT]\n");
+	return true;
 }
 
 char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
-			  socklen_t addrlen) {
+		   socklen_t addrlen) {
 	char stripaddr[INET6_ADDRSTRLEN];
 	char strport[6]; // max port number is 65535, so 5 chars + null terminator
 	getnameinfo(addr, addrlen, stripaddr, sizeof(stripaddr), strport, sizeof(strport),
@@ -131,13 +128,13 @@ char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[stat
 	return dest;
 }
 
-/* Open, configure and bind all available sockets with given port on the device for both IPv6 and
- * IPv4 communication.
+/* Open, configure and bind a socket with given port.
  *
  * @param port String representation of the desired port number.
- * @param err_out Output parameter signifying success (zero) or failure (nonzero).
- * @return Vector of properly configured sockets (as pollfd structs).
- * @retval NULL On some types of failure.
+ * @param ai_family AF_INET, AF_INET6 or AF_UNSPEC. If AF_INET6 is specified, IPv4 client addresses
+ * will be mapped to IPv6.
+ * @return A socket file descriptor.
+ * @retval -1 if unable to bind a socket.
  */
 static int bind_socket(const char *port, int ai_family) {
 	int sock_ = -1;
@@ -146,7 +143,7 @@ static int bind_socket(const char *port, int ai_family) {
 	struct addrinfo hints = {
 		.ai_family = ai_family,
 		.ai_socktype = SOCK_STREAM,
-		.ai_protocol = 6, // TCP
+		.ai_protocol = getprotobyname("TCP")->p_proto,
 		.ai_flags = AI_PASSIVE // use a wildcard IP address
 			    | AI_NUMERICSERV, // host argument to getaddrinfo shall be a string
 					      // representation of the desired port number
@@ -159,7 +156,6 @@ static int bind_socket(const char *port, int ai_family) {
 	}
 
 	for (struct addrinfo *addr = res; addr != NULL; addr = addr->ai_next) {
-		bool error = false;
 		sock_ = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 		if (sock_ == -1)
 			continue;
@@ -173,7 +169,7 @@ static int bind_socket(const char *port, int ai_family) {
 		};
 		if (setsockopt(sock_, SOL_SOCKET, SO_LINGER, &lingeropt, sizeof(lingeropt))) {
 			dwarn("setsockopt");
-			error = true;
+			goto err;
 		}
 
 		/* Allow the reuse of sockets even if there are lingering connections from the
@@ -182,20 +178,23 @@ static int bind_socket(const char *port, int ai_family) {
 		int opt = 1;
 		if (setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
 			dwarn("setsockopt");
-			error = true;
+			goto err;
 		}
 
 		DPRINTF("attempting to bind %s\n",
 			print_inaddr(sizeof(dbuf), dbuf, addr->ai_addr, addr->ai_addrlen));
 
-		if (!error && bind(sock_, addr->ai_addr, addr->ai_addrlen) == 0) {
+		if (bind(sock_, addr->ai_addr, addr->ai_addrlen) == 0) {
 			DPRINTF(GREEN("SUCCESS!") " fd is %d\n", sock_);
 			goto end;
+		} else {
+			dwarn("bind");
+			goto err;
 		}
 
-		dwarn(RED("FAILURE"));
-
+err:
 		close(sock_);
+		sock_ = -1;
 	}
 
 end:
@@ -339,7 +338,6 @@ static void users_init(size_t capacity) {
  * function is called repeatedly.
  */
 static void accept_new_connections(int sock, int timeout) {
-	errno = 0;
 	struct pollfd pfd = {.fd = sock, .events = POLLIN};
 	int pollret = 0;
 	while ((pollret = poll(&pfd, 1, timeout)) != -1 && (pfd.revents & POLLIN)) {
@@ -409,13 +407,16 @@ static void listen_and_serve(int sock) {
 			int conn = users.conns->arr[i].fd;
 			short events = users.conns->arr[i].revents;
 
-			if (!(events & POLL_IN) && handle_keepalive(u, now))
-				continue;
-
 			/* users with conn == -1 were marked as invalid, so skip them - we'll remove
 			 * them later */
 			if (conn == -1)
 				continue;
+
+			if (!(events & POLL_IN)) {
+				handle_keepalive(u, now);
+				continue;
+			}
+			u->keepalive_timestamp = now;
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
@@ -432,7 +433,6 @@ static void listen_and_serve(int sock) {
 					mark_usr_removed(i, true);
 					break;
 				case KEEP:
-					time(&u->keepalive_timestamp); // update keep-alive
 					break;
 				}
 				break;
@@ -443,7 +443,7 @@ static void listen_and_serve(int sock) {
 			case POLLERR:
 			case POLLERR | POLLIN:
 			case POLLERR | POLLHUP:
-			case POLLHUP | POLLIN | POLLERR:
+			case POLLERR | POLLHUP | POLLIN:
 				dwarnx(RED("error") " on connection %d - closing", conn);
 				mark_usr_removed(i, false);
 				break;
@@ -476,8 +476,8 @@ int main(int argc, char **argv) {
 	prepare_cleanup();
 
 	args args = {.port = MQTT_DEFAULT_PORT};
-	if (parse_args(argc, argv, &args) != 0)
-		derrx(USER_ERR, "Failed to parse commandline arguments");
+	if (!parse_args(argc, argv, &args))
+		derrx(USER_ERR, "Usage: mqttserver [-p PORT]");
 
 	// first try with ipv6 - if successful ipv4 addresses will be mapped to ipv6
 	sock = bind_socket(args.port, AF_INET6);

@@ -7,10 +7,13 @@ CC = cc
 CFLAGS = -std=c99 -D_XOPEN_SOURCE=700 -Wall -Wextra -Wpedantic -I./include
 LDFLAGS =
 
+SOURCES = src/main.c src/mqtt.c
+HEADERS = include/magic.h include/main.h include/mqtt.h include/vector.h
+
 all: mqttserver
 
-mqttserver: src/* include/*
-	$(CC) $(CFLAGS) $(LDFLAGS) $(EXTERNFLAGS) -o $@ src/*.c
+mqttserver: $(SOURCES) $(HEADERS)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(EXTERNFLAGS) -o $@ $(SOURCES)
 
 clean:
 	rm -f mqttserver

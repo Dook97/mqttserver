@@ -564,9 +564,10 @@ static bool disconnect_handler(const fixed_header *hdr, user_data *usr, const ch
 /* Verifies correctness of the fixed header.
  *
  * @retval handler function applicable to given packet type
+ * @returns NULL if the fixed header has an invalid format
  */
 static packet_handler verify_fixed_header(const fixed_header *hdr, const user_data *usr) {
-	if (hdr->remaining_length == -1) {
+	if (hdr->remaining_length < 0) {
 		dwarnx("invalid remaining length field");
 		return NULL;
 	}
@@ -633,8 +634,6 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		    && usr->CONNECT_recieved)
 			return disconnect_handler;
 		break;
-	default:
-		return NULL;
 	}
 
 	return NULL;
