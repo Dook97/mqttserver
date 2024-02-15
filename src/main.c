@@ -57,8 +57,7 @@ ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
 	struct pollfd pfd = {.fd = fd, .events = POLLIN, .revents = 0};
 
 	while (true) {
-		ssize_t loop_nread = 0;
-		loop_nread = read(fd, buf + nread, nbytes - nread);
+		ssize_t loop_nread = read(fd, buf + nread, nbytes - nread);
 
 		if (loop_nread == -1)
 			return -1;
@@ -405,27 +404,25 @@ static void listen_and_serve(int sock) {
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
 			user_data *u = &users.data->arr[i];
 			int conn = users.conns->arr[i].fd;
-			short events = users.conns->arr[i].revents;
+			short events = users.conns->arr[i].revents & (POLLIN|POLLHUP|POLLERR|POLLNVAL);
 
 			/* users with conn == -1 were marked as invalid, so skip them - we'll remove
 			 * them later */
 			if (conn == -1)
 				continue;
 
-			if (!(events & POLL_IN))
-				handle_keepalive(u, now);
-			else
-				u->keepalive_timestamp = now;
+			if (!(events & POLLIN) && handle_keepalive(u, now))
+				continue;
+			u->keepalive_timestamp = now;
 
-			assert(!(events & POLLNVAL)); // no invalid fildes present
-			switch (events & (POLLIN|POLLHUP|POLLERR)) {
+			switch (events) {
 			case POLLHUP | POLLIN:
 				DPRINTF("POLLHUP on connection %d, but there's still data to be read\n", conn);
 				// fallthrough
 			case POLLIN:
 				switch (process_packet(conn, &users.data->arr[i])) {
 				case CLOSE:
-					dwarnx("error when processing packet - closing connection");
+					dwarnx(RED("error") " on connection %d - closing", conn);
 					mark_usr_removed(i, false);
 					break;
 				case CLOSE_GRACEFULLY:
@@ -448,9 +445,9 @@ static void listen_and_serve(int sock) {
 				break;
 			case 0:
 				break;
-			default:
-				derrx(SERVER_ERR, RED("Unexpected code path taken: ")
-				      "conn=%d flags=%d", conn, events);
+			default: // POLLNVAL present - should never happen
+				derrx(SERVER_ERR, RED("POLLNVAL") "on connection %d with events %d",
+				      conn, events);
 			}
 
 			users_clean();

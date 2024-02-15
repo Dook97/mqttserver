@@ -687,7 +687,6 @@ enum packet_action process_packet(int conn, user_data *usr) {
 	if (!handler(&hdr, usr, message_buf, conn)) {
 		dwarnx(RED("CLOSING") " connection %d due to a malformed packet", conn);
 		retval = CLOSE;
-		goto end;
 	} else {
 		retval = KEEP;
 	}
