@@ -412,11 +412,10 @@ static void listen_and_serve(int sock) {
 			if (conn == -1)
 				continue;
 
-			if (!(events & POLL_IN)) {
+			if (!(events & POLL_IN))
 				handle_keepalive(u, now);
-				continue;
-			}
-			u->keepalive_timestamp = now;
+			else
+				u->keepalive_timestamp = now;
 
 			assert(!(events & POLLNVAL)); // no invalid fildes present
 			switch (events & (POLLIN|POLLHUP|POLLERR)) {
