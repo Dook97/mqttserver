@@ -411,9 +411,10 @@ static void listen_and_serve(int sock) {
 			if (conn == -1)
 				continue;
 
-			if (!(events & POLLIN) && handle_keepalive(u, now))
+			if (events & POLLIN)
+				u->keepalive_timestamp = now;
+			if (handle_keepalive(u, now))
 				continue;
-			u->keepalive_timestamp = now;
 
 			switch (events) {
 			case POLLHUP | POLLIN:
