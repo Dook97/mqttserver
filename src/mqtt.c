@@ -482,16 +482,6 @@ static bool subscribe_handler(const fixed_header *hdr, user_data *usr, const cha
 	return send_suback(nsubs, packet_identifier, conn);
 }
 
-static bool send_unsuback(int conn, uint16_t packet_identifier) {
-	/* see
-	 * Figure 3.31 - UNSUBACK Packet fixed header
-	 * and
-	 * Figure 3.32 - UNSUBACK Packet variable header
-	 */
-	char response[4] = {'\xb0', '\x02', (char)(packet_identifier >> 8), (char)(packet_identifier & 0xff)};
-	return write(conn, response, 4) == 4;
-}
-
 static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {
 	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("UNSUBSCRIBE") " packet\n", usr->client_id);
 
@@ -536,7 +526,11 @@ static bool unsubscribe_handler(const fixed_header *hdr, user_data *usr, const c
 	for (size_t i = 0; i < usr->subscriptions->nmemb; ++i)
 		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
 
-	return send_unsuback(conn, packet_identifier);
+	/* Figure 3.31 - UNSUBACK Packet fixed header
+	 * Figure 3.32 - UNSUBACK Packet variable header
+	 */
+	const char response[] = {'\xb0', '\x02', (char)(packet_identifier >> 8), (char)(packet_identifier & 0xff)};
+	return write(conn, response, 4) == 4;
 }
 
 static bool pingreq_handler(const fixed_header *hdr, user_data *usr, const char *packet, int conn) {

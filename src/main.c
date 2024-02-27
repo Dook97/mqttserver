@@ -487,5 +487,6 @@ int main(int argc, char **argv) {
 
 	listen_and_serve(sock);
 
-	return 0;
+	// we should never get here
+	derrx(SERVER_ERR, "Escaped main program loop. This shouldn't happen.");
 }
