@@ -141,4 +141,17 @@
 		--((vec)->nmemb);                                            \
 	} while (0)
 
+#define vec_remove_range(vec, from, to)                                          \
+	/* Remove elements in the range [from, to).                              \
+	 *                                                                       \
+	 * @param vec Pointer to the vector.                                     \
+	 * @param from Starting index of the to-be-removed subrange - inclusive. \
+	 * @param to End index of the to-be-removed subrange - noninclusive.     \
+	 */                                                                      \
+	do {                                                                     \
+		memmove(&(vec)->arr[(from)], &(vec)->arr[(to)],                  \
+			sizeof((vec)->arr[0]) * (to - from));                    \
+		vec->nmemb -= (to) - (from);                                     \
+	} while (0)
+
 #endif

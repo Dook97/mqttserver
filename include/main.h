@@ -5,6 +5,7 @@
 #include <poll.h>
 #include <sys/socket.h>
 
+#include "streambuf.h"
 #include "vector.h"
 
 /* exit codes */
@@ -15,7 +16,6 @@
 #define NO_MEMORY 127
 
 #define POLL_TIMEOUT 50 // millisecs
-#define READ_TIMEOUT 50 // millisecs
 #define MQTT_DEFAULT_PORT "1883"
 #define CLIENT_ID_MAXLEN 23
 
@@ -44,6 +44,8 @@ typedef struct {
 	time_t keepalive_timestamp;
 	char client_id[CLIENT_ID_MAXLEN + 1]; // +1 for 0 terminator
 	str_vec *subscriptions;
+
+	streambuf *sbuf;
 } user_data;
 
 VECTOR_DEF(user_data, user_vec);
@@ -80,18 +82,5 @@ bool remove_usr_by_id(char *id, bool gracefully);
  * @return true if success false if user not found
  */
 bool remove_usr_by_ptr(user_data *usr, bool gracefully);
-
-/* A wrapper around read() which blocks until it reads nbytes or there are no more data to be read
- * from fd or timeout expires.
- *
- * @param nbytes Number of bytes to read.
- * @param buf Destination buffer.
- * @param timeout Period after which if no new data is available the call will fail.
- * @retval Number of bytes read.
- * @returns -1 on timeout or read error
- * @returns <nbytes on EOF
- * @returns nbytes otherwise
- */
-ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout);
 
 #endif

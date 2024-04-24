@@ -1,5 +1,4 @@
 #include <assert.h>
-#include <errno.h>
 #include <inttypes.h>
 #include <netdb.h>
 #include <signal.h>
@@ -22,6 +21,8 @@ users_t users = {
 
 static int sock = -1;
 
+static void mark_usr_removed(size_t index, bool gracefully);
+
 /* for use with atexit() */
 static void cleanup(void) {
 	DPRINTF("entering cleanup\n");
@@ -31,8 +32,7 @@ static void cleanup(void) {
 
 	if (users.conns != NULL) {
 		for (size_t i = 0; i < users.data->nmemb; ++i)
-			if (close(users.conns->arr[i].fd))
-				dwarn("failed to close connection %d", users.conns->arr[i].fd);
+			mark_usr_removed(i, false);
 	}
 
 	free(users.data);
@@ -50,38 +50,6 @@ static void sigint_handler(int sig) {
 	exit(SIGINT_EXIT);
 
 	(void)sig;
-}
-
-ssize_t readn(int fd, size_t nbytes, char buf[static nbytes], int timeout) {
-	ssize_t nread = 0;
-	struct pollfd pfd = {.fd = fd, .events = POLLIN, .revents = 0};
-
-	while (true) {
-		ssize_t loop_nread = read(fd, buf + nread, nbytes - nread);
-
-		if (loop_nread == -1)
-			return -1;
-		if (loop_nread == 0)
-			return nread;
-
-		nread += loop_nread;
-		if (nread == (ssize_t)nbytes)
-			return nread;
-
-		if (timeout < 0)
-			continue;
-
-		/* if no data becomes available in timeout millis fail the call */
-		if (poll(&pfd, 1, timeout) == -1) {
-			dwarn("poll");
-			continue;
-		}
-
-		if (!(pfd.revents & POLL_IN)) {
-			dwarnx("timed out trying to read from %d", fd);
-			return -1;
-		}
-	}
 }
 
 /* Parse commandline arguments.
@@ -213,7 +181,8 @@ static void users_append(user_data *data, int connection) {
 	SIG_PROTECT_BEGIN;
 
 	vec_init(&data->subscriptions, 4);
-	if (data->subscriptions == NULL)
+	data->sbuf = sbuf_make();
+	if (data->subscriptions == NULL || data->sbuf == NULL)
 		derr(NO_MEMORY, "malloc");
 
 	vec_append(&users.data, *data, &vecerr);
@@ -249,6 +218,7 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 	for (size_t i = 0; i < subs->nmemb; ++i)
 		free(subs->arr[i]);
 	free(u->subscriptions);
+	free(u->sbuf);
 
 	if (gracefully) {
 		struct linger lopt = {.l_onoff = 0};
@@ -369,7 +339,7 @@ static void accept_new_connections(int sock, int timeout) {
 static bool handle_keepalive(user_data *u, time_t now) {
 	if (u->CONNECT_recieved && u->keep_alive != 0
 	    && now - u->keepalive_timestamp > (u->keep_alive * 3) / 2) {
-		dwarnx("keep alive period expired for user " MAGENTA("'%s'\n"), u->client_id);
+		dwarnx("keep alive period expired for user " MAGENTA("'%s'"), u->client_id);
 		/* sending TCP RST as per [MQTT-3.1.2-24] */
 		remove_usr_by_ptr(u, false);
 		return true;

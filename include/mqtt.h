@@ -5,7 +5,7 @@
 
 #include "main.h"
 
-#define MESSAGE_MAX_LEN 2046
+#define MESSAGE_MAX_LEN 2048
 
 /* revision number of the MQTT protocol - we only support this one */
 #define PROTOCOL_LEVEL 4
@@ -98,7 +98,8 @@ typedef struct {
  *
  * @retval false if the packet was malformed, true otherwise
  */
-typedef bool (*packet_handler)(const fixed_header *h, user_data *u, const char *packet, int conn);
+typedef enum packet_action (*packet_handler)(const fixed_header *h, user_data *u,
+					     const unsigned char *packet, int conn);
 
 /* To be called on a connection which has data ready for reading (ie. we expect to recieve an MQTT
  * packet).

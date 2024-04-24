@@ -7,8 +7,8 @@ CC = cc
 CFLAGS = -std=c99 -D_XOPEN_SOURCE=700 -Wall -Wextra -Wpedantic -I./include
 LDFLAGS =
 
-SOURCES = src/main.c src/mqtt.c
-HEADERS = include/magic.h include/main.h include/mqtt.h include/vector.h
+SOURCES = src/main.c src/mqtt.c src/streambuf.c
+HEADERS = include/magic.h include/main.h include/mqtt.h include/vector.h include/streambuf.h
 
 all: mqttserver
 
