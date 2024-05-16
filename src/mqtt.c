@@ -140,29 +140,6 @@ static int encode_remaining_length(uint32_t toencode, uchar dest[static 4]) {
 	return 4;
 }
 
-static bool send_connack(const int conn, const uchar code) {
-	/* see Figure 3.8 - CONNACK Packet fixed header
-	 *
-	 * 1. the fixed header (2B)
-	 * 	1. packet type = 0b0010
-	 * 	2. flags = 0b0000
-	 * 	3. remaining length (1B) = 0x02
-	 *
-	 * see Figure 3.9 - CONNACK Packet variable header
-	 *
-	 * 2. variable header (2B)
-	 * 	1. Connect Acknowledge Flags (1B)
-	 * 		- [0] = Session Present; always 0 in this implementation
-	 * 		- rest = RESERVED 0s
-	 * 	2. Connect return code (1B)
-	 *
-	 * 3. payload
-	 * 	- NONE
-	 */
-	uchar buf[4] = {'\x20', '\x02', '\x00', code};
-	return write(conn, buf, 4) == 4;
-}
-
 static enum packet_action connect_handler(const fixed_header *hdr, user_data *usr, const uchar *packet, int conn) {
 	DPRINTF("User (conn %d) sent a " MAGENTA("CONNECT") " packet\n", conn);
 
@@ -238,7 +215,10 @@ finish:
 		return CLOSE;
 	}
 
-	if (!send_connack(conn, connack_ret)) {
+	/* see Figure 3.8 - CONNACK Packet fixed header
+	 * see Figure 3.9 - CONNACK Packet variable header */
+	uchar buf[4] = {'\x20', '\x02', '\x00', (uchar)connack_ret};
+	if (write(conn, buf, 4) != 4) {
 		dwarnx("Unable to send CONNACK");
 		return CLOSE;
 	}
@@ -441,7 +421,7 @@ static str_vec *extract_topics(size_t buflen, const uchar buf[static buflen], bo
 static enum packet_action subscribe_handler(const fixed_header *hdr, user_data *usr, const uchar *packet, int conn) {
 	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("SUBSCRIBE") " packet\n", usr->client_id);
 
-	uchar *read_head = (uchar *)packet;
+	const uchar *read_head = packet;
 
 	uint16_t packet_identifier = read_uint16(read_head);
 	read_head += 2;
@@ -516,9 +496,7 @@ static enum packet_action unsubscribe_handler(const fixed_header *hdr, user_data
 	}
 
 	/* remove matching subscriptions
-	 *
-	 * iterating in reverse so that we can call vec_remove_at without screwing up our indexing
-	 */
+	 * iterating in reverse so that we can call vec_remove_at without screwing up our indexing */
 	str_vec *subs = usr->subscriptions;
 	for (ssize_t i = usr->subscriptions->nmemb - 1; i >= 0; --i) {
 		for (size_t j = 0; j < unsubs->nmemb; ++j) {
