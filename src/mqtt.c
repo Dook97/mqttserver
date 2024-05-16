@@ -654,6 +654,7 @@ enum packet_action process_packet(int conn, user_data *usr) {
 		int32_t remaining_length = decode_remaining_length(
 			SB_DATA(usr->sbuf) + 1, SB_DATASIZE(usr->sbuf) - 1, &header_nbytes);
 		++header_nbytes; // +1 for fixed header
+		const size_t message_size = remaining_length + header_nbytes;
 
 		switch (remaining_length) {
 		case -2:
@@ -663,7 +664,7 @@ enum packet_action process_packet(int conn, user_data *usr) {
 			dwarnx("invalid remaining length field");
 			return CLOSE;
 		default:
-			if ((size_t)remaining_length > SB_DATASIZE(usr->sbuf)) {
+			if (message_size > SB_DATASIZE(usr->sbuf)) {
 				DPRINTF("the whole packet hasn't arrived yet\n");
 				return KEEP;
 			}
@@ -696,7 +697,7 @@ enum packet_action process_packet(int conn, user_data *usr) {
 		case KEEP:
 			break;
 		}
-		sbuf_mark_read(usr->sbuf, header_nbytes + remaining_length);
+		sbuf_mark_read(usr->sbuf, message_size);
 	}
 
 	return KEEP;

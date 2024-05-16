@@ -10,12 +10,16 @@ streambuf *sbuf_make(void) {
 	streambuf* ret = malloc(sizeof(streambuf) + STREAMBUF_DEFAULT_SIZE);
 	if (ret == NULL)
 		return NULL;
-	ret->begin = ret->end = 0;
+	ret->begin = 0;
+	ret->end = 0;
 	ret->cap = STREAMBUF_DEFAULT_SIZE;
 	return ret;
 }
 
 void sbuf_compact(streambuf *sb) {
+	assert(sb->begin <= sb->end);
+	assert(sb->end <= sb->cap);
+
 	if (sb->begin == 0)
 		return;
 
@@ -25,6 +29,9 @@ void sbuf_compact(streambuf *sb) {
 }
 
 streambuf *sbuf_make_fit(streambuf *sb, size_t size) {
+	assert(sb->begin <= sb->end);
+	assert(sb->end <= sb->cap);
+
 	/* if we can't fit the requested data into the stream buffer, compact existing data by
 	 * shifting them to the beggining of storage */
 	if (sb->begin + size > sb->cap)
@@ -61,5 +68,10 @@ ssize_t sbuf_load(streambuf **sbuf, int fd, size_t count) {
 }
 
 void sbuf_mark_read(streambuf *sbuf, size_t count) {
+	assert(sbuf->begin <= sbuf->end);
+	assert(sbuf->end <= sbuf->cap);
+
 	sbuf->begin += count;
+
+	assert(sbuf->begin <= sbuf->end);
 }
