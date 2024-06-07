@@ -85,8 +85,7 @@ static bool parse_args(int argc, char *argv[static 1], args out[static 1]) {
 	return true;
 }
 
-char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
-		   socklen_t addrlen) {
+char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1], socklen_t addrlen) {
 	char stripaddr[INET6_ADDRSTRLEN];
 	char strport[6]; // max port number is 65535, so 5 chars + null terminator
 	getnameinfo(addr, addrlen, stripaddr, sizeof(stripaddr), strport, sizeof(strport),

@@ -46,6 +46,8 @@ streambuf *sbuf_make_fit(streambuf *sb, size_t size) {
 		sb = realloc(sb, sizeof(streambuf) + new_size);
 	}
 
+	assert(sb->end <= sb->cap);
+
 	return sb;
 }
 
@@ -62,6 +64,9 @@ ssize_t sbuf_load(streambuf **sbuf, int fd, size_t count) {
 	ssize_t nread = read(fd, &sb->data[sb->end], count);
 	if (nread > 0)
 		sb->end += nread;
+
+	assert(sb->begin <= sb->end);
+	assert(sb->end <= sb->cap);
 
 	*sbuf = sb;
 	return nread;

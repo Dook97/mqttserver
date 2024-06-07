@@ -239,13 +239,11 @@ static bool is_subscribed(user_data *u, size_t topic_len, const uchar topic[stat
 	return false;
 }
 
-static void send_publish(const int_vec *subscribers, size_t packet_len,
-				const uchar packet[static packet_len]) {
+static void send_publish(const int_vec *subscribers, size_t packet_len, const uchar packet[static packet_len]) {
 	uchar fixed_header[5] = {'\x30'};
 	int encode_ret = encode_remaining_length(packet_len, fixed_header + 1);
 	if (encode_ret == -1)
-		derrx(SERVER_ERR,
-		      "failed to encode remaining length of server packet - this should never happen");
+		derrx(SERVER_ERR, "failed to encode remaining length of server packet - this should never happen");
 
 	const int hdr_len = encode_ret + 1;
 
@@ -276,8 +274,7 @@ static enum packet_action publish_handler(const fixed_header *hdr, user_data *us
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
 		user_data *u = &users.data->arr[i];
 		if (is_subscribed(u, len, packet + 2)) {
-			DPRINTF("sending a " MAGENTA("PUBLISH") " packet to user " MAGENTA("'%s'\n"),
-				u->client_id);
+			DPRINTF("sending a " MAGENTA("PUBLISH") " packet to user " MAGENTA("'%s'\n"), u->client_id);
 			bool vec_err = false;
 			vec_append(&subscribers, users.conns->arr[i].fd, &vec_err);
 			if (vec_err)
