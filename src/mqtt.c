@@ -122,7 +122,7 @@ static int32_t decode_remaining_length(uchar *src, size_t bufsize, size_t *len) 
  * @param toencode The 4B unsigned integer to encode
  * @param dest A buffer of at least 4B to store the encoded number
  * @retval length of the encoded number.
- * @returns -1 if toencode was in incorrect format
+ * @returns -1 if toencode is a value which cannot be represented
  */
 static int encode_remaining_length(uint32_t toencode, uchar dest[static 4]) {
 	if (toencode > MQTT_MSG_MAX_LEN)

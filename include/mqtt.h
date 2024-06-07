@@ -93,14 +93,13 @@ typedef struct {
 	// 0x0 and 0xf are reserved and mustn't be used
 	unsigned char packet_type : 4;
 	unsigned char flags : 4;
-	// max 0xffffff7f (=268 435 455)
 	// combined length of the variable header and payload
 	int32_t remaining_length;
 } fixed_header;
 
 /* functions for handling distinct packet types
  *
- * @retval false if the packet was malformed, true otherwise
+ * @retval enum describing action to be taken by the caller
  */
 typedef enum packet_action (*packet_handler)(const fixed_header *h, user_data *u,
 					     const unsigned char *packet, int conn);
