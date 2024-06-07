@@ -5,7 +5,11 @@
 
 #include "main.h"
 
-#define MESSAGE_MAX_LEN 2048
+// max message length for this implementation
+#define MESSAGE_MAX_LEN		2048
+
+// theoretical message length supported by protocol
+#define MQTT_MSG_MAX_LEN	268435455
 
 /* revision number of the MQTT protocol - we only support this one */
 #define PROTOCOL_LEVEL 4

@@ -125,7 +125,7 @@ static int32_t decode_remaining_length(uchar *src, size_t bufsize, size_t *len) 
  * @returns -1 if toencode was in incorrect format
  */
 static int encode_remaining_length(uint32_t toencode, uchar dest[static 4]) {
-	if (toencode & 0x80)
+	if (toencode > MQTT_MSG_MAX_LEN)
 		return -1;
 
 	for (int i = 0; i < 4; ++i) {
