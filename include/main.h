@@ -33,7 +33,7 @@ typedef struct {
 	struct sockaddr_storage addr;
 
 	/* whether MQTT connection was estabilished */
-	bool CONNECT_recieved;
+	bool connect_recieved;
 
 	/* after 1,5x of this, if no control packet was recieved, terminate the connection
 	 * [MQTT-3.1.2-24]

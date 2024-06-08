@@ -12,9 +12,10 @@ typedef struct {
 
 #define SBUF_ENOMEM -2
 
-#define SB_EMPTY(sbuf) ((sbuf)->begin == (sbuf)->end)
-#define SB_DATASIZE(sbuf) ((sbuf)->end - (sbuf)->begin)
-#define SB_DATA(sbuf) (&(sbuf)->data[(sbuf)->begin])
+#define SB_DATASIZE(sbuf)	((sbuf)->end - (sbuf)->begin)
+#define SB_EMPTY(sbuf)		((sbuf)->begin == (sbuf)->end)
+#define SB_DATA(sbuf)		(&(sbuf)->data[(sbuf)->begin])
+#define SB_FREE(sbuf)		((sbuf)->cap - (sbuf)->end)
 
 /* @brief Allocate and initialize a new streambuffer.
  * @retval Pointer to a streambuf.

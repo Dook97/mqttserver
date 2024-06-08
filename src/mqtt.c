@@ -143,8 +143,8 @@ static int encode_remaining_length(uint32_t toencode, uchar dest[static 4]) {
 static enum packet_action connect_handler(const fixed_header *hdr, user_data *usr, const uchar *packet, int conn) {
 	DPRINTF("User (conn %d) sent a " MAGENTA("CONNECT") " packet\n", conn);
 
-	assert(!usr->CONNECT_recieved);
-	usr->CONNECT_recieved = true;
+	assert(!usr->connect_recieved);
+	usr->connect_recieved = true;
 
 	int connack_ret = CONNECTION_ACCEPTED;
 	const uchar *read_head = packet;
@@ -339,8 +339,8 @@ static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
  * @param with_QoS Whether a QoS byte follows the string data.
  * @retval Length of the topic string, including the 2B of length and possibly a QoS byte.
  */
-static ssize_t read_topic(size_t buflen, const uchar buf[static buflen],
-			  str_vec *topics[static 1], bool with_QoS) {
+static ssize_t read_topic(size_t buflen, const uchar buf[static buflen], str_vec *topics[static 1],
+			  bool with_QoS) {
 	ssize_t string_len = validate_topic(buflen, buf);
 	/* +2 for utf8 string length bytes +1 for QoS byte */
 	const size_t topic_len = string_len + 2 + (with_QoS ? 1 : 0);
@@ -447,8 +447,7 @@ static enum packet_action subscribe_handler(const fixed_header *hdr, user_data *
 		bool present = false;
 		for (size_t j = 0; j < usr->subscriptions->nmemb; ++j) {
 			if (!strcmp(topics->arr[i], usr->subscriptions->arr[j])) {
-				dwarnx("User " MAGENTA("'%s'")
-				       " trying to subscribe to an already subscribed-to topic (%s)",
+				dwarnx("User " MAGENTA("'%s'") " trying to subscribe to an already subscribed-to topic (%s)",
 				       usr->client_id, topics->arr[i]);
 				free(topics->arr[i]);
 				present = true;
@@ -498,8 +497,8 @@ static enum packet_action unsubscribe_handler(const fixed_header *hdr, user_data
 	for (ssize_t i = usr->subscriptions->nmemb - 1; i >= 0; --i) {
 		for (size_t j = 0; j < unsubs->nmemb; ++j) {
 			if (!strcmp(subs->arr[i], unsubs->arr[j])) {
-				DPRINTF("removing subscription " MAGENTA("'%s'")
-					" for user " MAGENTA("'%s'\n"), subs->arr[i], usr->client_id);
+				DPRINTF("removing subscription " MAGENTA("'%s'") " for user " MAGENTA("'%s'\n"),
+					subs->arr[i], usr->client_id);
 				free(subs->arr[i]);
 				vec_remove_at(subs, i);
 				break;
@@ -574,7 +573,7 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 * [MQTT-3.1.3-5]
 		 */
 		if (hdr->flags == CONNECT_DEF_FLAGS && hdr->remaining_length >= 13
-		    && !usr->CONNECT_recieved)
+		    && !usr->connect_recieved)
 			return connect_handler;
 		break;
 	case PUBLISH:
@@ -586,7 +585,7 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 * of the topic string which is at least 1B [MQTT-4.7.3-1]. No payload has to be
 		 * present.
 		 */
-		if (!(hdr->flags & 0x0e) && hdr->remaining_length >= 3 && usr->CONNECT_recieved)
+		if (!(hdr->flags & 0x0e) && hdr->remaining_length >= 3 && usr->connect_recieved)
 			return publish_handler;
 
 		dwarnx(MAGENTA("PUBLISH") " requested QoS: %d", (hdr->flags >> 1) & 0x03);
@@ -598,8 +597,7 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 * contains at least one topic filter [MQTT-3.8.3-3] which is a utf8 string, at
 		 * least one character long [MQTT-4.7.3-1] + a QoS byte; in total 6B or more
 		 */
-		if (hdr->flags == SUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 6
-		    && usr->CONNECT_recieved)
+		if (hdr->flags == SUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 6 && usr->connect_recieved)
 			return subscribe_handler;
 		break;
 	case UNSUBSCRIBE:
@@ -607,20 +605,18 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 *
 		 * length: packet identifier (2B), at least one topic filter (3B)
 		 */
-		if (hdr->flags == UNSUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 5
-		    && usr->CONNECT_recieved)
+		if (hdr->flags == UNSUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 5 && usr->connect_recieved)
 			return unsubscribe_handler;
 		break;
 	case PINGREQ:
 		/* see Figure 3.33 - PINGREQ Packet fixed header */
-		if (hdr->flags == PINGREQ_DEF_FLAGS && hdr->remaining_length == 0
-		    && usr->CONNECT_recieved)
+		if (hdr->flags == PINGREQ_DEF_FLAGS && hdr->remaining_length == 0 && usr->connect_recieved)
 			return pingreq_handler;
 		break;
 	case DISCONNECT:
 		/* see Figure 3.35 - DISCONNECT Packet fixed header */
 		if (hdr->flags == DISCONNECT_DEF_FLAGS && hdr->remaining_length == 0
-		    && usr->CONNECT_recieved)
+		    && usr->connect_recieved)
 			return disconnect_handler;
 		break;
 	}

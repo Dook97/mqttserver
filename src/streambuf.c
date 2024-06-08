@@ -7,12 +7,15 @@
 #define STREAMBUF_DEFAULT_SIZE 2048
 
 streambuf *sbuf_make(void) {
-	streambuf* ret = malloc(sizeof(streambuf) + STREAMBUF_DEFAULT_SIZE);
+	streambuf *ret = malloc(sizeof(streambuf) + STREAMBUF_DEFAULT_SIZE);
 	if (ret == NULL)
 		return NULL;
-	ret->begin = 0;
-	ret->end = 0;
-	ret->cap = STREAMBUF_DEFAULT_SIZE;
+
+	*ret = (streambuf){
+		.begin = 0,
+		.end = 0,
+		.cap = STREAMBUF_DEFAULT_SIZE,
+	};
 	return ret;
 }
 
@@ -34,11 +37,11 @@ streambuf *sbuf_make_fit(streambuf *sb, size_t size) {
 
 	/* if we can't fit the requested data into the stream buffer, compact existing data by
 	 * shifting them to the beggining of storage */
-	if (sb->begin + size > sb->cap)
+	if (size > SB_FREE(sb))
 		sbuf_compact(sb);
 
 	/* if that doesn't cut it, realloc */
-	if (sb->begin + size > sb->cap) {
+	if (size > SB_FREE(sb)) {
 		size_t new_size = STREAMBUF_DEFAULT_SIZE;
 		while (new_size < size)
 			new_size *= 2;

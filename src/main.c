@@ -175,7 +175,7 @@ static void users_append(user_data *data, int connection) {
 	bool vecerr = false;
 	struct pollfd item = {.fd = connection, .events = POLLIN};
 	data->client_id[0] = '\0';
-	data->CONNECT_recieved = false;
+	data->connect_recieved = false;
 
 	SIG_PROTECT_BEGIN;
 
@@ -338,7 +338,7 @@ static void accept_new_connections(int sock, int timeout) {
  * @retval true if client was disconnected else false
  */
 static bool handle_keepalive(user_data *u, time_t now) {
-	if (u->CONNECT_recieved && u->keep_alive != 0
+	if (u->connect_recieved && u->keep_alive != 0
 	    && now - u->keepalive_timestamp > (u->keep_alive * 3) / 2) {
 		dwarnx("keep alive period expired for user " MAGENTA("'%s'"), u->client_id);
 		/* sending TCP RST as per [MQTT-3.1.2-24] */
