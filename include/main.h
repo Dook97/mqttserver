@@ -70,9 +70,10 @@ char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[stat
  * @param id null terminated string representing the MQTT user id
  * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
  * should be sent.
+ * @param max length to compare up to
  * @return true if success false if user not found
  */
-bool remove_usr_by_id(char *id, bool gracefully);
+bool remove_usr_by_id(char *id, bool gracefully, size_t id_len);
 
 /* Mark user as removed. The user shouldn't be accessed after calling this.
  *

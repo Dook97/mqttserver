@@ -265,12 +265,14 @@ static void users_clean(void) {
 	}
 }
 
-bool remove_usr_by_id(char *id, bool gracefully) {
+bool remove_usr_by_id(char *id, bool gracefully, size_t id_len) {
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
-		if (!strncmp(id, users.data->arr[i].client_id, CLIENT_ID_MAXLEN)) {
-			if (users.conns->arr[i].fd == -1)
-				return false;
+		// strncmp only checks prefixes, so make sure the lengths match
+		size_t other_len = strlen(users.data->arr[i].client_id);
+		if (id_len != other_len)
+			continue;
 
+		if (!strncmp(id, users.data->arr[i].client_id, id_len)) {
 			mark_usr_removed(i, gracefully);
 			return true;
 		}

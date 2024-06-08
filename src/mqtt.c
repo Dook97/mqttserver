@@ -111,7 +111,7 @@ static int32_t decode_remaining_length(uchar *src, size_t bufsize, size_t *len) 
 		}
 	}
 	if (src[i - 1] & 0x80)
-		return i == bufsize ? -1 : -2;
+		return i == 4 ? -1 : -2;
 
 	*len = i;
 	return output;
@@ -199,7 +199,7 @@ static enum packet_action connect_handler(const fixed_header *hdr, user_data *us
 	}
 
 	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
-	if (remove_usr_by_id((char *)read_head, true))
+	if (remove_usr_by_id((char *)read_head, true, identifier_len))
 		DPRINTF("a user with matching id found - will be disconnected\n");
 
 	/* store the userid string into the new client */
