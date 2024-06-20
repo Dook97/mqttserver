@@ -239,24 +239,6 @@ static bool is_subscribed(user_data *u, size_t topic_len, const uchar topic[stat
 	return false;
 }
 
-static void send_publish(const int_vec *subscribers, size_t packet_len, const uchar packet[static packet_len]) {
-	uchar fixed_header[5] = {'\x30'};
-	int encode_ret = encode_remaining_length(packet_len, fixed_header + 1);
-	if (encode_ret == -1)
-		derrx(SERVER_ERR, "failed to encode remaining length of server packet - this should never happen");
-
-	const int hdr_len = encode_ret + 1;
-
-	for (size_t i = 0; i < subscribers->nmemb; ++i) {
-		const int conn = subscribers->arr[i];
-
-		if (write(conn, fixed_header, hdr_len) != hdr_len
-		    || write(conn, packet, packet_len) != (ssize_t)packet_len)
-			dwarnx(RED("FAILED") " to properly send " MAGENTA("PUBLISH")
-			       "packet to subscriber (connection %d)", conn);
-	}
-}
-
 static enum packet_action publish_handler(const fixed_header *hdr, user_data *usr, const uchar *packet, int conn) {
 	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PUBLISH") " packet\n", usr->client_id);
 
@@ -266,24 +248,29 @@ static enum packet_action publish_handler(const fixed_header *hdr, user_data *us
 		return CLOSE;
 	}
 
-	int_vec *subscribers;
-	vec_init(&subscribers, 8);
-	if (subscribers == NULL)
-		derr(NO_MEMORY, "malloc");
+	uchar fixed_header[5] = {'\x30'};
+	int encode_ret = encode_remaining_length(hdr->remaining_length, fixed_header + 1);
+	assert(encode_ret != -1);
+
+	const int hdr_len = encode_ret + 1;
 
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
 		user_data *u = &users.data->arr[i];
+		int uconn = users.conns->arr[i].fd;
 		if (is_subscribed(u, len, packet + 2)) {
 			DPRINTF("sending a " MAGENTA("PUBLISH") " packet to user " MAGENTA("'%s'\n"), u->client_id);
-			bool vec_err = false;
-			vec_append(&subscribers, users.conns->arr[i].fd, &vec_err);
-			if (vec_err)
-				derr(NO_MEMORY, "realloc");
+
+			bool fail;
+			fail  = write(uconn, fixed_header, hdr_len) != hdr_len;
+			fail |= write(uconn, packet, hdr->remaining_length) != hdr->remaining_length;
+
+			if (fail) {
+				dwarnx(RED("FAILED") " to properly send " MAGENTA("PUBLISH")
+				       "packet to subscriber (connection %d)", uconn);
+			}
 		}
 	}
 
-	send_publish(subscribers, hdr->remaining_length, packet);
-	free(subscribers);
 
 	return KEEP;
 
