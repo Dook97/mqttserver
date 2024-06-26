@@ -3,16 +3,21 @@
 
 /* Constants and definitions as per MQTT v3.1.1 */
 
+#include <stdint.h>
+
 #include "main.h"
 
-// max message length for this implementation
+/* max message length for this implementation */
 #define MESSAGE_MAX_LEN		4096
 
-// theoretical message length supported by protocol
+/* theoretical message length supported by protocol */
 #define MQTT_MSG_MAX_LEN	268435455
 
 /* revision number of the MQTT protocol - we only support this one */
 #define PROTOCOL_LEVEL 4
+
+/* Figure 3.2 - Protocol Name bytes */
+#define MQTT_PROTO_NAME (char[]){'\x00', '\x04', 'M', 'Q', 'T', 'T'}
 
 /* - [0] = RESERVED; always 0
  * - [1] = Clean Session; 1 means to not deal with
@@ -61,11 +66,11 @@ enum suback_code {
 };
 
 /* to be returned by process_packet_handler() in mqtt.c */
-enum packet_action {
-	CLOSE,
-	CLOSE_GRACEFULLY,
+typedef enum {
+	CLOSE_ERR,
+	CLOSE_OK,
 	KEEP,
-};
+} packet_action;
 
 /* except for PUBLISH all control packets have the flags field predefined
  * for PUBLISH these have the following meaning:
@@ -87,22 +92,20 @@ enum packet_action {
 #define PINGREQ_DEF_FLAGS	0 // 0b0000
 #define PINGRESP_DEF_FLAGS	0 // 0b0000
 #define DISCONNECT_DEF_FLAGS	0 // 0b0000
-// ...support for binary constants is coming in C23 ;p
+/* ...support for binary constants is coming in C23 ;p */
 
 typedef struct {
-	// 0x0 and 0xf are reserved and mustn't be used
-	unsigned char packet_type : 4;
-	unsigned char flags : 4;
-	// combined length of the variable header and payload
-	int32_t remaining_length;
+	uint8_t packet_type : 4; /* 0x0 and 0xf are reserved and mustn't be used */
+	uint8_t flags : 4;
+	int32_t remaining_length; /* combined length of the variable header and payload */
 } fixed_header;
 
 /* functions for handling distinct packet types
  *
  * @retval enum describing action to be taken by the caller
  */
-typedef enum packet_action (*packet_handler)(const fixed_header *h, user_data *u,
-					     const unsigned char *packet, int conn);
+typedef packet_action (*packet_handler)(const fixed_header *h, user_data *u,
+					const uint8_t *packet, int conn);
 
 /* To be called on a connection which has data ready for reading (ie. we expect to recieve an MQTT
  * packet).
@@ -113,6 +116,6 @@ typedef enum packet_action (*packet_handler)(const fixed_header *h, user_data *u
  * @param usr Pointer to the data of the user in question.
  * @retval enum describing action to be taken by the caller
  */
-enum packet_action process_packet(int conn, user_data *usr);
+packet_action process_packet(int conn, user_data *usr);
 
 #endif

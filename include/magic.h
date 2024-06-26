@@ -2,39 +2,41 @@
 #define MAGIC_H_
 
 #include <err.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #define MIN(a, b) (((a) <= (b)) ? (a) : (b))
 #define MAX(a, b) (((a) >= (b)) ? (a) : (b))
 
-// block signals
-#define SIG_PROTECT_BEGIN                                                                       \
-	do {                                                                                    \
-		sigset_t SIG_PROTECT__mask;                                                     \
-		sigset_t SIG_PROTECT__oldmask;                                                  \
-		sigfillset(&SIG_PROTECT__mask);                                                 \
-                                                                                                \
-		/* blocking these is a bad idea */                                              \
-		sigdelset(&SIG_PROTECT__mask, SIGBUS);                                          \
-		sigdelset(&SIG_PROTECT__mask, SIGFPE);                                          \
-		sigdelset(&SIG_PROTECT__mask, SIGILL);                                          \
-		sigdelset(&SIG_PROTECT__mask, SIGSEGV);                                         \
-                                                                                                \
-		DPRINTF(MAGENTA("Blocking signals") ", to ensure consistency of user data.\n"); \
-                                                                                                \
-		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__mask, &SIG_PROTECT__oldmask))        \
-			dwarn("sigprocmask")
+#define ARR_LEN(arr) (sizeof((arr)) / sizeof((arr)[0]))
 
-// ...do whatever needs to be done then unblock them again
+/* block signals */
+#define SIG_PROTECT_BEGIN                                                                  \
+	do {                                                                               \
+		sigset_t SIG_PROTECT__mask;                                                \
+		sigset_t SIG_PROTECT__oldmask;                                             \
+		sigfillset(&SIG_PROTECT__mask);                                            \
+                                                                                           \
+		/* blocking these is a bad idea */                                         \
+		sigdelset(&SIG_PROTECT__mask, SIGBUS);                                     \
+		sigdelset(&SIG_PROTECT__mask, SIGFPE);                                     \
+		sigdelset(&SIG_PROTECT__mask, SIGILL);                                     \
+		sigdelset(&SIG_PROTECT__mask, SIGSEGV);                                    \
+                                                                                           \
+		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__mask, &SIG_PROTECT__oldmask)) { \
+			dwarn("sigprocmask");                                              \
+			break;                                                             \
+		}
+
+/* ...do whatever needs to be done then unblock them again */
 #define SIG_PROTECT_END                                                    \
 		if (sigprocmask(SIG_SETMASK, &SIG_PROTECT__oldmask, NULL)) \
 			dwarn("sigprocmask");                              \
-		else                                                       \
-			DPRINTF(MAGENTA("Signals unblocked\n"));           \
 	} while (0)
 
-// ANSI escape color sequences
+/* ANSI color escape sequences */
 #ifdef COLOR
 #define GREEN(str)	"\033[1;32m" str "\033[0m"
 #define RED(str)	"\033[1;91m" str "\033[0m"
@@ -47,7 +49,7 @@
 #define MAGENTA(str)	str
 #endif
 
-// debug macros
+/* debug macros */
 #define str(param) xstr(param)
 #define xstr(param) #param
 
@@ -84,5 +86,18 @@
 		fprintf(stderr, "[" YELLOW("WARNX") " " __FILE__ ":" str(__LINE__) "] "); \
 		warnx(__VA_ARGS__);                                                       \
 	} while (0)
+
+/* Thin wrapper around realloc which calls derr() on allocation failure. */
+static inline void *memrealloc(void *ptr, size_t size) {
+	void *ret = realloc(ptr, size);
+	if (ret == NULL)
+		derr(ENOMEM, "memrealloc: failed allocating %zuB", size);
+	return ret;
+}
+
+/* Thin wrapper around malloc which calls derr() on allocation failure. */
+static inline void *memalloc(size_t size) {
+	return memrealloc(NULL, size);
+}
 
 #endif

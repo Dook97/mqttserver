@@ -1,11 +1,14 @@
 #ifndef MAIN_H_
 #define MAIN_H_
 
-#include <stdint.h>
 #include <poll.h>
+#include <stdint.h>
 #include <sys/socket.h>
 
 #include "streambuf.h"
+
+/* replace default vector allocator with an error checking one */
+#define VEC_REALLOC memrealloc
 #include "vector.h"
 
 /* exit codes */
@@ -22,6 +25,7 @@
 /* common vector types */
 VECTOR_DEF(char *, str_vec);
 VECTOR_DEF(int, int_vec);
+VECTOR_DEF(struct pollfd, pollfd_vec);
 
 /* command line arguments from getopt */
 typedef struct {
@@ -29,31 +33,21 @@ typedef struct {
 } args;
 
 typedef struct {
-	socklen_t addrlen;
+	streambuf	*sbuf;
+	str_vec		*subscriptions;
+	time_t		keepalive_timestamp;	/* last recieved packet timestamp */
+	uint16_t	keep_alive;		/* 0 => no timeout */
+	bool		connect_recieved;
+	socklen_t	addrlen;
 	struct sockaddr_storage addr;
-
-	/* whether MQTT connection was estabilished */
-	bool connect_recieved;
-
-	/* after 1,5x of this, if no control packet was recieved, terminate the connection
-	 * [MQTT-3.1.2-24]
-	 * 0 means no timeout
-	 */
-	uint16_t keep_alive;
-	/* last recieved packet timestamp */
-	time_t keepalive_timestamp;
-	char client_id[CLIENT_ID_MAXLEN + 1]; // +1 for 0 terminator
-	str_vec *subscriptions;
-
-	streambuf *sbuf;
+	char		client_id[CLIENT_ID_MAXLEN + 1];
 } user_data;
 
 VECTOR_DEF(user_data, user_vec);
-VECTOR_DEF(struct pollfd, pollfd_vec);
 
 typedef struct {
-	// these two vectors must stay synchronized
-	// rest of the program assumes that connection[i] belongs to user[i]
+	/* these two vectors must stay synchronized
+	 * rest of the program assumes that connection[i] belongs to user[i] */
 	user_vec *data;
 	pollfd_vec *conns;
 } users_t;

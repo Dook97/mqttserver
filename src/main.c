@@ -46,7 +46,7 @@ static void sigint_handler(int sig) {
 	dwarnx("SIGINT intercepted");
 	dwarnx("Exiting due to SIGINT with exit code %d", SIGINT_EXIT);
 
-	// cleanup() will be called automatically
+	/* cleanup() will be called automatically */
 	exit(SIGINT_EXIT);
 
 	(void)sig;
@@ -172,7 +172,6 @@ end:
 static void users_append(user_data *data, int connection) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
-	bool vecerr = false;
 	struct pollfd item = {.fd = connection, .events = POLLIN};
 	data->client_id[0] = '\0';
 	data->connect_recieved = false;
@@ -181,14 +180,11 @@ static void users_append(user_data *data, int connection) {
 
 	vec_init(&data->subscriptions, 4);
 	data->sbuf = sbuf_make();
-	if (data->subscriptions == NULL || data->sbuf == NULL)
+	if (data->sbuf == NULL)
 		derr(NO_MEMORY, "malloc");
 
-	vec_append(&users.data, *data, &vecerr);
-	vec_append(&users.conns, item, &vecerr);
-
-	if (vecerr)
-		derr(NO_MEMORY, "malloc: failed to append user");
+	vec_append(&users.data, *data, NULL);
+	vec_append(&users.conns, item, NULL);
 
 	DPRINTF(GREEN("SUCCESSFULY") " added user (connection %d)\n", connection);
 
@@ -238,7 +234,11 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 static void users_remove_at(size_t index, bool gracefully) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
-	DPRINTF("removing user " MAGENTA("'%s'") "\n", users.data->arr[index].client_id);
+	const char *usrname = (*users.data->arr[index].client_id == '\0')
+				      ? "[[UNNAMED]]"
+				      : users.data->arr[index].client_id;
+
+	DPRINTF("removing user " MAGENTA("'%s'") "\n", usrname);
 
 	SIG_PROTECT_BEGIN;
 
@@ -257,22 +257,19 @@ static void users_remove_at(size_t index, bool gracefully) {
 
 /* Remove users marked by mark_usr_removed from the global users vector. */
 static void users_clean(void) {
-	for (size_t i = 0; i < users.data->nmemb;) {
+	for (ssize_t i = (ssize_t)users.data->nmemb - 1; i >= 0; --i) {
 		if (users.conns->arr[i].fd == -1)
 			users_remove_at(i, true);
-		else
-			++i;
 	}
 }
 
 bool remove_usr_by_id(char *id, bool gracefully, size_t id_len) {
 	for (size_t i = 0; i < users.data->nmemb; ++i) {
-		// strncmp only checks prefixes, so make sure the lengths match
 		size_t other_len = strlen(users.data->arr[i].client_id);
 		if (id_len != other_len)
 			continue;
 
-		if (!strncmp(id, users.data->arr[i].client_id, id_len)) {
+		if (!memcmp(id, users.data->arr[i].client_id, id_len)) {
 			mark_usr_removed(i, gracefully);
 			return true;
 		}
@@ -288,17 +285,6 @@ bool remove_usr_by_ptr(user_data *usr, bool gracefully) {
 	}
 	mark_usr_removed(index, gracefully);
 	return true;
-}
-
-/* initialize the global users vector
- *
- * @param capacity Initial capacity of the vector.
- */
-static void users_init(size_t capacity) {
-	vec_init(&users.data, capacity);
-	vec_init(&users.conns, capacity);
-	if (users.data == NULL || users.conns == NULL)
-		derr(NO_MEMORY, "malloc");
 }
 
 /* Check if there are any new connections pending and if so accept them
@@ -359,7 +345,6 @@ static void listen_and_serve(int sock) {
 	if (listen(sock, SOMAXCONN))
 		derr(SERVER_ERR, "listen");
 
-	users_init(8);
 	while (true) {
 		do {
 			accept_new_connections(sock, POLL_TIMEOUT);
@@ -390,14 +375,14 @@ static void listen_and_serve(int sock) {
 			switch (events) {
 			case POLLHUP | POLLIN:
 				DPRINTF("POLLHUP on connection %d, but there's still data to be read\n", conn);
-				// fallthrough
+				/* fallthrough */
 			case POLLIN:
 				switch (process_packet(conn, &users.data->arr[i])) {
-				case CLOSE:
+				case CLOSE_ERR:
 					dwarnx(RED("error") " on connection %d - closing", conn);
 					mark_usr_removed(i, false);
 					break;
-				case CLOSE_GRACEFULLY:
+				case CLOSE_OK:
 					mark_usr_removed(i, true);
 					break;
 				case KEEP:
@@ -447,7 +432,7 @@ int main(int argc, char **argv) {
 	if (!parse_args(argc, argv, &args))
 		derrx(USER_ERR, "Usage: mqttserver [-p PORT]");
 
-	// first try with ipv6 - if successful ipv4 addresses will be mapped to ipv6
+	/* first try with ipv6 - if successful ipv4 addresses will be mapped to ipv6 */
 	sock = bind_socket(args.port, AF_INET6);
 	if (sock == -1) {
 		dwarnx("Unable to bind a wildcard socket - falling back to IPv4");
@@ -456,8 +441,12 @@ int main(int argc, char **argv) {
 	if (sock == -1)
 		derrx(NO_SOCKET, "failed to bind to a socket");
 
+	static const size_t USERS_INITIAL_SIZE = 8;
+	vec_init(&users.data, USERS_INITIAL_SIZE);
+	vec_init(&users.conns, USERS_INITIAL_SIZE);
+
 	listen_and_serve(sock);
 
-	// we should never get here
+	/* we should never get here */
 	derrx(SERVER_ERR, "Escaped main program loop. This shouldn't happen.");
 }

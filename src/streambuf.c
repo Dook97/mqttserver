@@ -37,11 +37,11 @@ streambuf *sbuf_make_fit(streambuf *sb, size_t size) {
 
 	/* if we can't fit the requested data into the stream buffer, compact existing data by
 	 * shifting them to the beggining of storage */
-	if (size > SB_FREE(sb))
+	if (size > SB_AVAIL(sb))
 		sbuf_compact(sb);
 
 	/* if that doesn't cut it, realloc */
-	if (size > SB_FREE(sb)) {
+	if (size > SB_AVAIL(sb)) {
 		size_t new_size = STREAMBUF_DEFAULT_SIZE;
 		while (new_size < size)
 			new_size *= 2;
