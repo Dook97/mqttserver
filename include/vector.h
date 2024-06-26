@@ -42,7 +42,7 @@
 			*(vec) = NULL;                                                             \
 			break;                                                                     \
 		}                                                                                  \
-		*(vec) = malloc(sizeof(**(vec)) + (reserve)*vec_init__membsize);                   \
+		*(vec) = VEC_REALLOC(NULL, sizeof(**(vec)) + (reserve) * vec_init__membsize);      \
 		if (*(vec) == NULL)                                                                \
 			break;                                                                     \
 		(*(vec))->cap = (reserve);                                                         \
@@ -62,17 +62,19 @@
 		const size_t vec_append__membsize = sizeof((*(vec))->arr[0]);                    \
 		if ((*(vec))->nmemb == (*(vec))->cap) {                                          \
 			(*(vec))->cap *= 2;                                                      \
-			void *vec_append__tmp = realloc(                                         \
+			void *vec_append__tmp = VEC_REALLOC(                                     \
 				*(vec), sizeof(**(vec)) + (*(vec))->cap * vec_append__membsize); \
 			if (vec_append__tmp == NULL) {                                           \
-				*(error) = true;                                                 \
+				if (error != NULL)                                               \
+					*(bool *)(error) = true;                                 \
 				break;                                                           \
 			}                                                                        \
 			*(vec) = vec_append__tmp;                                                \
 		}                                                                                \
 		(*(vec))->arr[(*(vec))->nmemb] = (item_);                                        \
 		++(*(vec))->nmemb;                                                               \
-		*(error) = false;                                                                \
+		if (error != NULL)                                                               \
+			*(bool *)(error) = true;                                                 \
 	} while (0)
 
 #define vec_pop(vec)                        \
@@ -84,28 +86,30 @@
 		--(vec)->nmemb;             \
 	} while (0)
 
-#define vec_trunc(vec, newcap, error)                                                    \
-	/* Truncate vector to given capacity.                                            \
-	 *                                                                               \
-	 * May move the vector to a different memory address.                            \
-	 *                                                                               \
-	 * If an error occurs 'error' will be set and vec will remain unchanged.         \
-	 *                                                                               \
-	 * @param vec Pointer to user's pointer to the vector.                           \
-	 * @param newcap Desired capacity.                                               \
-	 * @param error Pointer to a boolean signifying error.                           \
-	 */                                                                              \
-	do {                                                                             \
-		const size_t vec_trunc__membsize = sizeof((*(vec))->arr[0]);             \
-		void *vec_trunc__tmp =                                                   \
-			realloc(*(vec), sizeof(**(vec)) + (newcap)*vec_trunc__membsize); \
-		if (vec_trunc__tmp == NULL) {                                            \
-			*(error) = true;                                                 \
-			break;                                                           \
-		}                                                                        \
-		*(vec) = vec_trunc__tmp;                                                 \
-		(vec)->cap = (newcap);                                                   \
-		*(error) = false;                                                        \
+#define vec_trunc(vec, newcap, error)                                                          \
+	/* Truncate vector to given capacity.                                                  \
+	 *                                                                                     \
+	 * May move the vector to a different memory address.                                  \
+	 *                                                                                     \
+	 * If an error occurs 'error' will be set and vec will remain unchanged.               \
+	 *                                                                                     \
+	 * @param vec Pointer to user's pointer to the vector.                                 \
+	 * @param newcap Desired capacity.                                                     \
+	 * @param error Pointer to a boolean signifying error.                                 \
+	 */                                                                                    \
+	do {                                                                                   \
+		const size_t vec_trunc__membsize = sizeof((*(vec))->arr[0]);                   \
+		void *vec_trunc__tmp =                                                         \
+			VEC_REALLOC(*(vec), sizeof(**(vec)) + (newcap) * vec_trunc__membsize); \
+		if (vec_trunc__tmp == NULL) {                                                  \
+			if (error != NULL)                                                     \
+				*(bool *)(error) = true;                                       \
+			break;                                                                 \
+		}                                                                              \
+		*(vec) = vec_trunc__tmp;                                                       \
+		(vec)->cap = (newcap);                                                         \
+		if (error != NULL)                                                             \
+			*(bool *)(error) = true;                                               \
 	} while (0)
 
 #define vec_extend(vec, capdiff, error)                                                        \
@@ -117,28 +121,32 @@
 	 */                                                                                    \
 	do {                                                                                   \
 		const size_t vec_extend__membsize = sizeof((*(vec))->arr[0]);                  \
-		void *vec_extend__tmp = realloc(                                               \
+		void *vec_extend__tmp = VEC_REALLOC(                                           \
 			*(vec),                                                                \
 			sizeof(**(vec)) + ((*(vec))->cap + (capdiff)) * vec_extend__membsize); \
 		if (vec_extend__tmp == NULL) {                                                 \
-			*(error) = true;                                                       \
+			if (error != NULL)                                                     \
+				*(bool *)(error) = true;                                       \
 			break;                                                                 \
 		}                                                                              \
 		*(vec) = vec_extend__tmp;                                                      \
 		(vec)->cap += (capdiff);                                                       \
-		*(error) = false;                                                              \
+		if (error != NULL)                                                             \
+			*(bool *)(error) = true;                                               \
 	} while (0)
 
-#define vec_remove_at(vec, index)                                            \
-	/* Remove item at index from vector.                                 \
-	 *                                                                   \
-	 * @param vec Pointer to the vector.                                 \
-	 * @param index Index of the item to be removed.                     \
-	 */                                                                  \
-	do {                                                                 \
-		memmove(&(vec)->arr[(index)], &(vec)->arr[(index) + 1],      \
-			sizeof((vec)->arr[0]) * ((vec)->nmemb - (index)-1)); \
-		--((vec)->nmemb);                                            \
+#define vec_remove_at(vec, index)                                          \
+	/* Remove item at index from vector.                               \
+	 *                                                                 \
+	 * @param vec Pointer to the vector.                               \
+	 * @param index Index of the item to be removed.                   \
+	 */                                                                \
+	do {                                                               \
+		--((vec)->nmemb);                                          \
+		if ((vec)->nmemb - (index) == 0)                           \
+			break;                                             \
+		memmove(&(vec)->arr[(index)], &(vec)->arr[(index) + 1],    \
+			sizeof((vec)->arr[0]) * ((vec)->nmemb - (index))); \
 	} while (0)
 
 #define vec_remove_range(vec, from, to)                                          \
@@ -153,5 +161,9 @@
 			sizeof((vec)->arr[0]) * (to - from));                    \
 		vec->nmemb -= (to) - (from);                                     \
 	} while (0)
+
+#ifndef VEC_REALLOC
+#define VEC_REALLOC realloc
+#endif
 
 #endif

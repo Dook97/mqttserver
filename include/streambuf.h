@@ -14,8 +14,15 @@ typedef struct {
 
 #define SB_DATASIZE(sbuf)	((sbuf)->end - (sbuf)->begin)
 #define SB_EMPTY(sbuf)		((sbuf)->begin == (sbuf)->end)
+
+/* pointer to first valid data byte */
 #define SB_DATA(sbuf)		(&(sbuf)->data[(sbuf)->begin])
-#define SB_FREE(sbuf)		((sbuf)->cap - (sbuf)->end)
+
+/* immediately available storage bytes */
+#define SB_AVAIL(sbuf)		((sbuf)->cap - (sbuf)->end)
+
+/* storage bytes available as if the buffer were compacted */
+#define SB_FREE(sbuf)		((sbuf)->begin + SB_AVAIL((sbuf)))
 
 /* @brief Allocate and initialize a new streambuffer.
  * @retval Pointer to a streambuf.
