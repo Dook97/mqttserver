@@ -80,6 +80,8 @@ void sbuf_mark_read(streambuf *sbuf, size_t count) {
 	assert(sbuf->end <= sbuf->cap);
 
 	sbuf->begin += count;
+	if (sbuf->begin == sbuf->end)
+		sbuf->begin = sbuf->end = 0;
 
 	assert(sbuf->begin <= sbuf->end);
 }
