@@ -611,6 +611,8 @@ packet_action process_packet(int conn, user_data *usr) {
 	case SBUF_ENOMEM:
 		derr(NO_MEMORY, "failed allocating storage for packet buffer");
 	case -1:
+		if (errno == EAGAIN || errno == EWOULDBLOCK)
+			return KEEP;
 		dwarnx("connection error");
 		return CLOSE_ERR;
 		break;

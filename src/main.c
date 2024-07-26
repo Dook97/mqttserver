@@ -124,7 +124,7 @@ static int bind_socket(const char *port, int ai_family) {
 	}
 
 	for (struct addrinfo *addr = res; addr != NULL; addr = addr->ai_next) {
-		sock_ = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+		sock_ = socket(addr->ai_family, addr->ai_socktype | SOCK_NONBLOCK, addr->ai_protocol);
 		if (sock_ == -1)
 			continue;
 
@@ -291,36 +291,33 @@ bool remove_usr_by_ptr(user_data *usr, bool gracefully) {
 	return true;
 }
 
-/* Check if there are any new connections pending and if so accept them
+/*!
+ * Check if there are any new connections pending and if so accept them.
  *
  * @param sock The socket from which the connections are to be accepted.
- * @param timeout A timeout which is applied only once to avoid excessive syscalls when the
- * function is called repeatedly.
  */
-static void accept_new_connections(int sock, int timeout) {
-	struct pollfd pfd = {.fd = sock, .events = POLLIN};
-	int pollret = 0;
-	while ((pollret = poll(&pfd, 1, timeout)) != -1 && (pfd.revents & POLLIN)) {
+static void accept_conns(int sock) {
+	while (1) {
+		errno = 0;
 		user_data u = {.addrlen = sizeof(struct sockaddr_storage)};
 		int conn = accept(sock, (struct sockaddr *)&u.addr, &u.addrlen);
 
-		if (conn == -1) {
+		switch (errno) {
+		case 0:
+			DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
+				print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen), conn);
+			users_append(&u, conn);
+			break;
+		case EAGAIN: /* all conns from system queue have been accepted */
+#if (EAGAIN != EWOULDBLOCK)
+		case EWOULDBLOCK:
+#endif
+			return;
+		default:
 			dwarn("accept");
 			continue;
 		}
-
-		DPRINTF("connection with %s " GREEN("ESTABILISHED") "; fd is %d\n",
-			print_inaddr(sizeof(dbuf), dbuf, (struct sockaddr *)&u.addr, u.addrlen), conn);
-		users_append(&u, conn);
-
-		/* only wait on the first connection - this avoids potentially excessive waiting
-		 * when multiple users at once are waiting to have their connection request accepted
-		 * while also ensuring that we won't be bullying the kernel with syscalls
-		 */
-		timeout = 0;
 	}
-	if (pollret == -1)
-		dwarn("poll");
 }
 
 /*!
@@ -351,12 +348,20 @@ static void listen_and_serve(int sock) {
 		derr(SERVER_ERR, "listen");
 
 	while (true) {
-		do {
-			accept_new_connections(sock, POLL_TIMEOUT);
-		} while (users.conns->nmemb == 0);
+		if (users.data->nmemb == 0) {
+			switch (poll(&(struct pollfd){.fd = sock, .events = POLLIN}, 1, -1)) {
+			case -1:
+				dwarn("poll");
+			case 0:
+				continue;
+			case 1:
+				break;
+			}
+		}
 
-		/* zero timeout is OK - we've already waited in accept_new_connections() */
-		if (poll(users.conns->arr, users.conns->nmemb, 0) == -1) {
+		accept_conns(sock);
+
+		if (poll(users.conns->arr, users.conns->nmemb, POLL_TIMEOUT) == -1) {
 			dwarn("poll");
 			continue;
 		}
