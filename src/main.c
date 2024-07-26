@@ -328,9 +328,8 @@ static void accept_new_connections(int sock, int timeout) {
  *
  * @retval true if client was disconnected else false
  */
-static bool handle_keepalive(user_data *u, time_t now) {
-	if (u->connect_recieved && u->keep_alive != 0
-	    && now - u->keepalive_timestamp > (u->keep_alive * 3) / 2) {
+static bool keepalive_chck(user_data *u, time_t now) {
+	if (u->connect_recieved && u->ttl && (now - u->ttl_timestamp) > (u->ttl * 3) / 2) {
 		dwarnx("keep alive period expired for user " MAGENTA("'%s'"), u->client_id);
 		/* sending TCP RST as per [MQTT-3.1.2-24] */
 		remove_usr_by_ptr(u, false);
@@ -374,8 +373,8 @@ static void listen_and_serve(int sock) {
 				continue;
 
 			if (events & POLLIN)
-				u->keepalive_timestamp = now;
-			if (handle_keepalive(u, now))
+				u->ttl_timestamp = now;
+			if (keepalive_chck(u, now))
 				continue;
 
 			switch (events) {

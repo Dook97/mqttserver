@@ -178,7 +178,7 @@ static packet_action connect_handler(const fixed_header *hdr, user_data *usr, co
 	}
 
 	/* Figure 3.5 Keep Alive bytes */
-	usr->keep_alive = read_BE_16b(++read_head);
+	usr->ttl = read_BE_16b(++read_head);
 	read_head += 2;
 
 	/* 10B read so far + 2B for the utf8 string header */

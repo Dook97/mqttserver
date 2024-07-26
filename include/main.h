@@ -25,7 +25,7 @@
 /* common vector types */
 VECTOR_DEF(char *, str_vec);
 VECTOR_DEF(int, int_vec);
-VECTOR_DEF(struct pollfd, pollfd_vec);
+VECTOR_DEF(struct pollfd, plfd_vec);
 
 /* command line arguments from getopt */
 typedef struct {
@@ -35,8 +35,8 @@ typedef struct {
 typedef struct {
 	streambuf	*sbuf;
 	str_vec		*subscriptions;
-	time_t		keepalive_timestamp;	/* last recieved packet timestamp */
-	uint16_t	keep_alive;		/* 0 => no timeout */
+	time_t		ttl_timestamp;		/* last recieved packet timestamp */
+	uint16_t	ttl;			/* 0 => no timeout */
 	bool		connect_recieved;
 	socklen_t	addrlen;
 	struct sockaddr_storage addr;
@@ -49,7 +49,7 @@ typedef struct {
 	/* these two vectors must stay synchronized
 	 * rest of the program assumes that connection[i] belongs to user[i] */
 	user_vec *data;
-	pollfd_vec *conns;
+	plfd_vec *conns;
 } users_t;
 
 /* FIXME: would be nice not to have globals in code */
