@@ -5,7 +5,8 @@
 #include "mqtt.h"
 #include "magic.h"
 
-/* Read a 2B big-endian unsigned integer from buffer buf.
+/*!
+ * Read a 2B big-endian unsigned integer from buffer buf.
  *
  * @param buf Read buffer.
  * @return The read integer.
@@ -14,7 +15,8 @@ static uint16_t read_BE_16b(const uint8_t buf[static 2]) {
 	return ((uint16_t)buf[0] << 8) + (uint16_t)buf[1];
 }
 
-/* Verify whether a string is valid w.r.t. the MQTT specification
+/*!
+ * Verify whether a string is valid w.r.t. the MQTT specification
  *
  * Conditions:
  *	- strlen(buf) <= UINT16_MAX
@@ -40,7 +42,8 @@ static ssize_t validate_str(const size_t bufsize, const uint8_t *buf) {
 	return len;
 }
 
-/* Verify that given utf8 string is a valid topic string.
+/*!
+ * Verify that given utf8 string is a valid topic string.
  *
  * @param buflen Length of the buffer.
  * @param buf Buffer holding the topic string.
@@ -65,7 +68,8 @@ static ssize_t validate_topic(const size_t buflen, const uint8_t *buf) {
 	return len;
 }
 
-/* Verify that given utf8 string is a valid client id.
+/*!
+ * Verify that given utf8 string is a valid client id.
  *
  * @param buflen Length of the buffer.
  * @param buf Buffer holding the client id.
@@ -84,7 +88,8 @@ static ssize_t validate_clientid(const size_t buflen, const uint8_t *buf) {
 	return len;
 }
 
-/* Read and decode between 1 and 4 bytes of data present in the 'Remaining Length' field in the
+/*!
+ * Read and decode between 1 and 4 bytes of data present in the 'Remaining Length' field in the
  * fixed header of a MQTT packet.
  *
  * @param src Memory buffer containing at least one byte of encoded length information
@@ -115,7 +120,8 @@ static int32_t decode_remaining_length(uint8_t *src, size_t bufsize, size_t *len
 	return output;
 }
 
-/* Encode a 4B unsigned integer to the MQTT remaining length format
+/*!
+ * Encode a 4B unsigned integer to the MQTT remaining length format
  *
  * @param toencode The 4B unsigned integer to encode
  * @param dest A buffer of at least 4B to store the encoded number
@@ -309,7 +315,8 @@ static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
 	return nwritten == (ssize_t)packet_size;
 }
 
-/* Given a buffer of length buflen read the topic string which begins at the buffer address and
+/*!
+ * Given a buffer of length buflen read the topic string which begins at the buffer address and
  * return its length, including the 2 length bytes and a QoS byte. If successful store a copy of it
  * in the topics vector.
  *
@@ -348,7 +355,8 @@ static ssize_t read_topic(size_t buflen, const uint8_t *buf, str_vec *topics[sta
 	return topic_len;
 }
 
-/* Given a buffer of len buflen and assuming this buffer contains only topic strings, extract these
+/*!
+ * Given a buffer of len buflen and assuming this buffer contains only topic strings, extract these
  * and return a vector filled with them
  *
  * @param buflen Length of the buffer.
@@ -516,7 +524,8 @@ static packet_action disconnect_handler(const fixed_header *hdr, user_data *usr,
 	(void)packet;
 }
 
-/* Verifies correctness of the fixed header.
+/*!
+ * Verifies correctness of the fixed header.
  *
  * @retval handler function applicable to given packet type
  * @returns NULL if the fixed header has an invalid format

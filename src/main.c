@@ -52,7 +52,8 @@ static void sigint_handler(int sig) {
 	(void)sig;
 }
 
-/* Parse commandline arguments.
+/*!
+ * Parse commandline arguments.
  *
  * @param out Output parameter.
  * @return Value indicating succes or failure.
@@ -94,7 +95,8 @@ char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[stat
 	return dest;
 }
 
-/* Open, configure and bind a socket with given port.
+/*!
+ * Open, configure and bind a socket with given port.
  *
  * @param port String representation of the desired port number.
  * @param ai_family AF_INET, AF_INET6 or AF_UNSPEC. If AF_INET6 is specified, IPv4 client addresses
@@ -195,7 +197,8 @@ static void users_append(user_data *data, int connection) {
 	assert(users.data->nmemb == users.conns->nmemb);
 }
 
-/* Mark user at index as removed. The user shouldn't be accessed after calling this.
+/*!
+ * Mark user at index as removed. The user shouldn't be accessed after calling this.
  *
  * @param index Index in the global users vector.
  * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
@@ -225,7 +228,8 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 	*conn = -1;
 }
 
-/* Remove a user from the global users vector. Cleanup will be performed.
+/*!
+ * Remove a user from the global users vector. Cleanup will be performed.
  *
  * @param index Index in the global users vector.
  * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
@@ -319,7 +323,8 @@ static void accept_new_connections(int sock, int timeout) {
 		dwarn("poll");
 }
 
-/* check whether user exceeded his keep-alive period and if he did, disconnect him
+/*!
+ * Check whether user exceeded his keep-alive period and if he did, disconnect him.
  *
  * @retval true if client was disconnected else false
  */
@@ -334,7 +339,8 @@ static bool handle_keepalive(user_data *u, time_t now) {
 	return false;
 }
 
-/* Main program loop.
+/*!
+ * Main program loop.
  *
  * Accepts new connections, checks if any of the connections have available data then calls the
  * proper handlers or removes closed/erroneous connections etc.

@@ -100,14 +100,16 @@ typedef struct {
 	int32_t remaining_length; /* combined length of the variable header and payload */
 } fixed_header;
 
-/* functions for handling distinct packet types
+/*!
+ * functions for handling distinct packet types
  *
  * @retval enum describing action to be taken by the caller
  */
 typedef packet_action (*packet_handler)(const fixed_header *h, user_data *u,
 					const uint8_t *packet, int conn);
 
-/* To be called on a connection which has data ready for reading (ie. we expect to recieve an MQTT
+/*!
+ * To be called on a connection which has data ready for reading (ie. we expect to recieve an MQTT
  * packet).
  *
  * Reads and verifies the MQTT packet and performs any actions required.
