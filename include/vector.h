@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define VEC_ERR_OVERLOAD__(_1, _2, _3, NAME, ...) NAME
+
 #define VECTOR_DEF(type, vectype)                                                             \
 	/* Define a new vector type named 'vectype' holding items of type 'type'.             \
 	 *                                                                                    \
@@ -49,7 +51,7 @@
 		(*(vec))->nmemb = 0;                                                               \
 	} while (0)
 
-#define vec_append(vec, item_, error)                                                            \
+#define vec_append__err(vec, item_, error)                                                       \
 	/* Append an item to the vector.                                                         \
 	 *                                                                                       \
 	 * May move the vector to a different memory address.                                    \
@@ -65,7 +67,7 @@
 			void *vec_append__tmp = VEC_REALLOC(                                     \
 				*(vec), sizeof(**(vec)) + (*(vec))->cap * vec_append__membsize); \
 			if (vec_append__tmp == NULL) {                                           \
-				if (error != NULL)                                               \
+				if ((error) != NULL)                                             \
 					*(bool *)(error) = true;                                 \
 				break;                                                           \
 			}                                                                        \
@@ -73,9 +75,14 @@
 		}                                                                                \
 		(*(vec))->arr[(*(vec))->nmemb] = (item_);                                        \
 		++(*(vec))->nmemb;                                                               \
-		if (error != NULL)                                                               \
+		if ((error) != NULL)                                                             \
 			*(bool *)(error) = true;                                                 \
 	} while (0)
+
+#define vec_append__noerr(vec, item) vec_append__err(vec, item, NULL)
+
+#define vec_append(...) \
+	VEC_ERR_OVERLOAD__(__VA_ARGS__, vec_append__err, vec_append__noerr, _)(__VA_ARGS__)
 
 #define vec_pop(vec)                        \
 	/* Remove last element of a vector. \

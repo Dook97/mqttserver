@@ -8,7 +8,7 @@
 #include "streambuf.h"
 
 /* replace default vector allocator with an error checking one */
-#define VEC_REALLOC memrealloc
+#define VEC_REALLOC xrealloc
 #include "vector.h"
 
 /* exit codes */
@@ -34,32 +34,29 @@ typedef struct {
 
 typedef struct {
 	streambuf	*sbuf;
-	str_vec		*subscriptions;
+	str_vec		*subs;
 	time_t		ttl_timestamp;		/* last recieved packet timestamp */
 	uint16_t	ttl;			/* 0 => no timeout */
 	bool		connect_recieved;
 	socklen_t	addrlen;
 	struct sockaddr_storage addr;
-	char		client_id[CLIENT_ID_MAXLEN + 1];
-} user_data;
+	char		id[CLIENT_ID_MAXLEN + 1];
+} user;
 
-VECTOR_DEF(user_data, user_vec);
+VECTOR_DEF(user, user_vec);
 
 typedef struct {
 	/* these two vectors must stay synchronized
 	 * rest of the program assumes that connection[i] belongs to user[i] */
 	user_vec *data;
 	plfd_vec *conns;
-} users_t;
+} users__;
 
 /* FIXME: would be nice not to have globals in code */
-extern users_t users;
+extern users__ users;
 
-/* Write a human readable IPv4 or IPv6 address and port to buffer */
-char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1],
-		   socklen_t addrlen);
-
-/* Mark user with given id as removed. The user shouldn't be accessed after calling this.
+/*!
+ * Mark user with given id as removed. The user shouldn't be accessed after calling this.
  *
  * @param id null terminated string representing the MQTT user id
  * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
@@ -69,13 +66,13 @@ char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[stat
  */
 bool remove_usr_by_id(char *id, bool gracefully, size_t id_len);
 
-/* Mark user as removed. The user shouldn't be accessed after calling this.
+/*!
+ * Mark user as removed. The user shouldn't be accessed after calling this.
  *
  * @param usr Pointer to the user_data structure.
  * @param gracefully Whether the user's connection should be closed normally or if a TCP reset
  * should be sent.
- * @return true if success false if user not found
  */
-bool remove_usr_by_ptr(user_data *usr, bool gracefully);
+void remove_usr_by_ptr(user *usr, bool gracefully);
 
 #endif

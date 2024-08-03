@@ -14,7 +14,7 @@
 static char dbuf[256];
 #endif
 
-users_t users = {
+users__ users = {
 	.data = NULL,
 	.conns = NULL,
 };
@@ -86,15 +86,6 @@ static bool parse_args(int argc, char *argv[static 1], args out[static 1]) {
 	return true;
 }
 
-char *print_inaddr(size_t bufsize, char dest[bufsize], struct sockaddr addr[static 1], socklen_t addrlen) {
-	char stripaddr[INET6_ADDRSTRLEN];
-	char strport[6]; // max port number is 65535, so 5 chars + null terminator
-	getnameinfo(addr, addrlen, stripaddr, sizeof(stripaddr), strport, sizeof(strport),
-		    NI_NUMERICHOST | NI_NUMERICSERV);
-	snprintf(dest, bufsize, addr->sa_family == AF_INET6 ? "[%s]:%s" : "%s:%s", stripaddr, strport);
-	return dest;
-}
-
 /*!
  * Open, configure and bind a socket with given port.
  *
@@ -128,23 +119,12 @@ static int bind_socket(const char *port, int ai_family) {
 		if (sock_ == -1)
 			continue;
 
-		/* by default send a TCP RST on close(), only if the connection is to be closed
-		 * properly use setsockopt to change this individually
-		 */
-		struct linger lingeropt = {
-			.l_onoff = 1,
-			.l_linger = 0,
-		};
-		if (setsockopt(sock_, SOL_SOCKET, SO_LINGER, &lingeropt, sizeof(lingeropt))) {
-			dwarn("setsockopt");
-			goto err;
-		}
-
-		/* Allow the reuse of sockets even if there are lingering connections from the
-		 * previous invocation.
-		 */
-		int opt = 1;
-		if (setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+		errno = 0;
+		/* send a TCP RST on close(), if the connection is to be closed properly use
+		 * setsockopt to change this individually */
+		setsockopt(sock_, SOL_SOCKET, SO_LINGER, &(struct linger){.l_onoff = 1}, sizeof(struct linger));
+		setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+		if (errno) {
 			dwarn("setsockopt");
 			goto err;
 		}
@@ -171,22 +151,22 @@ end:
 }
 
 /* Add a new user to the global vector of users. */
-static void users_append(user_data *data, int connection) {
+static void users_append(user *data, int connection) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
 	struct pollfd item = {.fd = connection, .events = POLLIN};
-	data->client_id[0] = '\0';
+	data->id[0] = '\0';
 	data->connect_recieved = false;
 
 	SIG_PROTECT_BEGIN;
 
-	vec_init(&data->subscriptions, 4);
+	vec_init(&data->subs, 4);
 	data->sbuf = sbuf_make();
 	if (data->sbuf == NULL)
 		derr(NO_MEMORY, "malloc");
 
-	vec_append(&users.data, *data, NULL);
-	vec_append(&users.conns, item, NULL);
+	vec_append(&users.data, *data);
+	vec_append(&users.conns, item);
 
 	DPRINTF(GREEN("SUCCESSFULY") " added user (connection %d)\n", connection);
 
@@ -210,12 +190,12 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 	if (*conn == -1)
 		return;
 
-	user_data *u = &users.data->arr[index];
-	str_vec *subs = u->subscriptions;
+	user *u = &users.data->arr[index];
+	str_vec *subs = u->subs;
 
 	for (size_t i = 0; i < subs->nmemb; ++i)
 		free(subs->arr[i]);
-	free(u->subscriptions);
+	free(u->subs);
 	free(u->sbuf);
 
 	if (gracefully) {
@@ -238,9 +218,9 @@ static void mark_usr_removed(size_t index, bool gracefully) {
 static void users_remove_at(size_t index, bool gracefully) {
 	assert(users.data->nmemb == users.conns->nmemb);
 
-	const char *usrname = (*users.data->arr[index].client_id == '\0')
+	const char *usrname = (*users.data->arr[index].id == '\0')
 				      ? "[[UNNAMED]]"
-				      : users.data->arr[index].client_id;
+				      : users.data->arr[index].id;
 
 	DPRINTF("removing user " MAGENTA("'%s'") "\n", usrname);
 
@@ -267,28 +247,20 @@ static void users_clean(void) {
 	}
 }
 
-bool remove_usr_by_id(char *id, bool gracefully, size_t id_len) {
-	for (size_t i = 0; i < users.data->nmemb; ++i) {
-		size_t other_len = strlen(users.data->arr[i].client_id);
-		if (id_len != other_len)
-			continue;
+void remove_usr_by_ptr(user *usr, bool gracefully) {
+	ssize_t index = usr - users.data->arr;
+	assert(index >= 0 && (size_t)index <= users.data->nmemb && users.conns->arr[index].fd >= 0);
+	mark_usr_removed(index, gracefully);
+}
 
-		if (!memcmp(id, users.data->arr[i].client_id, id_len)) {
-			mark_usr_removed(i, gracefully);
+bool remove_usr_by_id(char *id, bool gracefully, size_t id_len) {
+	for (user *it = users.data->arr; it < &users.data->arr[users.data->nmemb]; ++it) {
+		if (strmemeq(id_len, it->id, id)) {
+			remove_usr_by_ptr(it, gracefully);
 			return true;
 		}
 	}
 	return false;
-}
-
-bool remove_usr_by_ptr(user_data *usr, bool gracefully) {
-	ssize_t index = usr - users.data->arr;
-	if (index < 0 || (size_t)index > users.data->nmemb || users.conns->arr[index].fd == -1) {
-		dwarnx("Invalid user pointer passed to remove_usr_by_ptr");
-		return false;
-	}
-	mark_usr_removed(index, gracefully);
-	return true;
 }
 
 /*!
@@ -299,7 +271,7 @@ bool remove_usr_by_ptr(user_data *usr, bool gracefully) {
 static void accept_conns(int sock) {
 	while (1) {
 		errno = 0;
-		user_data u = {.addrlen = sizeof(struct sockaddr_storage)};
+		user u = {.addrlen = sizeof(struct sockaddr_storage)};
 		int conn = accept(sock, (struct sockaddr *)&u.addr, &u.addrlen);
 
 		switch (errno) {
@@ -325,9 +297,9 @@ static void accept_conns(int sock) {
  *
  * @retval true if client was disconnected else false
  */
-static bool keepalive_chck(user_data *u, time_t now) {
+static bool keepalive_chck(user *u, time_t now) {
 	if (u->connect_recieved && u->ttl && (now - u->ttl_timestamp) > (u->ttl * 3) / 2) {
-		dwarnx("keep alive period expired for user " MAGENTA("'%s'"), u->client_id);
+		dwarnx("keep alive period expired for user " MAGENTA("'%s'"), u->id);
 		/* sending TCP RST as per [MQTT-3.1.2-24] */
 		remove_usr_by_ptr(u, false);
 		return true;
@@ -368,7 +340,7 @@ static void listen_and_serve(int sock) {
 
 		time_t now = time(NULL);
 		for (size_t i = 0; i < users.conns->nmemb; ++i) {
-			user_data *u = &users.data->arr[i];
+			user *u = &users.data->arr[i];
 			int conn = users.conns->arr[i].fd;
 			short events = users.conns->arr[i].revents & (POLLIN|POLLHUP|POLLERR|POLLNVAL);
 
@@ -387,7 +359,7 @@ static void listen_and_serve(int sock) {
 				DPRINTF("POLLHUP on connection %d, but there's still data to be read\n", conn);
 				/* fallthrough */
 			case POLLIN:
-				switch (process_packet(conn, &users.data->arr[i])) {
+				switch (process_pkt(conn, &users.data->arr[i])) {
 				case CLOSE_ERR:
 					dwarnx(RED("error") " on connection %d - closing", conn);
 					mark_usr_removed(i, false);
