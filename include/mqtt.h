@@ -32,7 +32,7 @@
  */
 #define CONNECT_FLAGS 2
 
-enum packet_type {
+enum pkt_type {
 	CONNECT = 1,
 	CONNACK = 2,
 	PUBLISH = 3,
@@ -65,12 +65,12 @@ enum suback_code {
 	FAILURE = 0x80,
 };
 
-/* to be returned by process_packet_handler() in mqtt.c */
+/* to be returned by process_pkt_handler() in mqtt.c */
 typedef enum {
 	CLOSE_ERR,
 	CLOSE_OK,
 	KEEP,
-} packet_action;
+} pkt_action;
 
 /* except for PUBLISH all control packets have the flags field predefined
  * for PUBLISH these have the following meaning:
@@ -95,18 +95,18 @@ typedef enum {
 /* ...support for binary constants is coming in C23 ;p */
 
 typedef struct {
-	uint8_t packet_type : 4; /* 0x0 and 0xf are reserved and mustn't be used */
+	uint8_t pkt_type : 4; /* 0x0 and 0xf are reserved and mustn't be used */
 	uint8_t flags : 4;
-	int32_t remaining_length; /* combined length of the variable header and payload */
-} fixed_header;
+	int32_t hdr_len;
+	int32_t rem_len; /* combined length of the variable header and payload */
+} pkt_info;
 
 /*!
  * functions for handling distinct packet types
  *
  * @retval enum describing action to be taken by the caller
  */
-typedef packet_action (*packet_handler)(const fixed_header *h, user_data *u,
-					const uint8_t *packet, int conn);
+typedef pkt_action (*pkt_handler)(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn);
 
 /*!
  * To be called on a connection which has data ready for reading (ie. we expect to recieve an MQTT
@@ -118,6 +118,6 @@ typedef packet_action (*packet_handler)(const fixed_header *h, user_data *u,
  * @param usr Pointer to the data of the user in question.
  * @retval enum describing action to be taken by the caller
  */
-packet_action process_packet(int conn, user_data *usr);
+pkt_action process_pkt(int conn, user *usr);
 
 #endif
