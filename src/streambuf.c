@@ -42,7 +42,7 @@ streambuf *sbuf_make_fit(streambuf *sb, size_t size) {
 
 	/* if that doesn't cut it, realloc */
 	if (size > SB_AVAIL(sb)) {
-		size_t new_size = STREAMBUF_DEFAULT_SIZE;
+		size_t new_size = sb->cap;
 		while (new_size < size)
 			new_size *= 2;
 		sb->cap = new_size;

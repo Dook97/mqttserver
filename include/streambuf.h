@@ -32,8 +32,7 @@ typedef struct {
  */
 streambuf *sbuf_make(void);
 
-/*!
- * @brief Moves data to the beggining of the streambuffer. */
+/*! @brief Moves data to the beggining of the streambuffer. */
 void sbuf_compact(streambuf *sb);
 
 /*!
