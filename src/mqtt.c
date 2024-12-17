@@ -2,18 +2,10 @@
 #include <ctype.h>
 #include <unistd.h>
 
-#include "mqtt.h"
 #include "magic.h"
+#include "mqtt.h"
 
-/*!
- * Read a 2B big-endian unsigned integer from buffer buf.
- *
- * @param buf Read buffer.
- * @return The read integer.
- */
-static uint16_t read_BE_16b(const uint8_t buf[static 2]) {
-	return ((uint16_t)buf[0] << 8) + (uint16_t)buf[1];
-}
+#define MIN_LOAD 1024
 
 /*!
  * Verify whether a string is valid w.r.t. the MQTT specification
@@ -25,17 +17,18 @@ static uint16_t read_BE_16b(const uint8_t buf[static 2]) {
  *
  * This function doesn't check all the conditions required by the MQTT spec.
  *
- * @param buflen Size of the buffer.
  * @param buf The buffer from which to read the string.
+ * @param buflen Size of the buffer.
  * @return The size of the string, not including the initial 2B which encode its stated length.
  * @retval -1 if invalid
  */
-static ssize_t validate_str(const size_t bufsize, const uint8_t *buf) {
+static ssize_t validate_str(const uint8_t *buf, const size_t bufsize) {
 	uint16_t len = read_BE_16b(buf);
 	if (len > bufsize)
 		return -1;
 
-	for (const uint8_t *head = buf + 2; head < buf + 2 + len; ++head)
+	buf += 2;
+	for (const uint8_t *head = buf; head < buf + len; ++head)
 		if (*head < ' ')
 			return -1;
 
@@ -45,12 +38,12 @@ static ssize_t validate_str(const size_t bufsize, const uint8_t *buf) {
 /*!
  * Verify that given utf8 string is a valid topic string.
  *
- * @param buflen Length of the buffer.
  * @param buf Buffer holding the topic string.
+ * @param buflen Length of the buffer.
  * @retval length of the topic string, not counting the 2B of metadata at the beggining
  */
-static ssize_t validate_topic(const size_t buflen, const uint8_t *buf) {
-	ssize_t len = validate_str(buflen, buf);
+static ssize_t validate_topic(const uint8_t *buf, const size_t buflen) {
+	ssize_t len = validate_str(buf, buflen);
 	if (len < 1)
 		return -1;
 
@@ -71,25 +64,31 @@ static ssize_t validate_topic(const size_t buflen, const uint8_t *buf) {
 /*!
  * Verify that given utf8 string is a valid client id.
  *
- * @param buflen Length of the buffer.
  * @param buf Buffer holding the client id.
+ * @param buflen Length of the buffer.
  * @retval length of the client id, not counting the 2B of metadata at the beggining
  */
-static ssize_t validate_clientid(const size_t buflen, const uint8_t *buf) {
-	ssize_t len = validate_str(buflen, buf);
+static ssize_t validate_clientid(const uint8_t *buf, const size_t buflen) {
+	ssize_t len = validate_str(buf, buflen);
 	if (len < 1)
 		return -1;
 
 	/* [MQTT-3.1.3-5] */
-	for (const uint8_t *head = buf + 2; head < buf + 2 + len; ++head)
+	buf += 2;
+	for (const uint8_t *head = buf; head < buf + len; ++head)
 		if (!isgraph(*head)) /* be lenient here, because why not - the spec allows it */
 			return -1;
 
 	return len;
 }
 
+enum {
+	REMLEN_INVALID = -1,
+	REMLEN_INCOMPLETE = -2,
+};
+
 /*!
- * Read and decode between 1 and 4 bytes of data present in the 'Remaining Length' field in the
+ * Read and decode between 1 and 4 bytes of data present in the 'Remaining Length' field of the
  * fixed header of a MQTT packet.
  *
  * @param src Memory buffer containing at least one byte of encoded length information
@@ -98,25 +97,23 @@ static ssize_t validate_clientid(const size_t buflen, const uint8_t *buf) {
  * @param len Output parameter storing the numer of bytes actually occupied by the packet length
  * information.
  * @retval The decoded number.
- * @returns -1 on invalid input
- * @returns -2 if more bytes in the buffer are required
+ * @returns REMLEN_INVALID on invalid input
+ * @returns REMLEN_INCOMPLETE if more bytes in the buffer are required
  */
-static int32_t decode_remaining_length(uint8_t *src, size_t bufsize, size_t *len) {
-	bufsize = MIN(4, bufsize);
-
+static int32_t decode_remlen(uint8_t *src, size_t bufsize, size_t *len) {
 	int32_t output = 0;
-	size_t i = 0;
-	for (; i < bufsize; ++i) {
-		output |= (src[i] & 0x7f) << (i * 7);
-		if (!(src[i] & 0x80)) {
-			++i;
-			break;
-		}
-	}
-	if (src[i - 1] & 0x80)
-		return i == 4 ? -1 : -2;
 
-	*len = i;
+	--src;
+	*len = 0;
+	bufsize = MIN(4, bufsize);
+	do {
+		output |= (*++src & 0x7f) << (*len * 7);
+		++*len;
+	} while ((*src & 0x80) && *len <= bufsize);
+
+	if (*src & 0x80)
+		return *len == 4 ? REMLEN_INVALID : REMLEN_INCOMPLETE;
+
 	return output;
 }
 
@@ -126,15 +123,14 @@ static int32_t decode_remaining_length(uint8_t *src, size_t bufsize, size_t *len
  * @param toencode The 4B unsigned integer to encode
  * @param dest A buffer of at least 4B to store the encoded number
  * @retval length of the encoded number.
- * @returns -1 if toencode is a value which cannot be represented
  */
-static int encode_remaining_length(uint32_t toencode, uint8_t dest[static 4]) {
+static int encode_remlen(uint32_t toencode, uint8_t dest[static 4]) {
 	assert(toencode <= MQTT_MSG_MAX_LEN);
 
 	for (int i = 0; i < 4; ++i) {
 		dest[i] = toencode & 0x7f;
 		toencode >>= 7;
-		if (toencode)
+		if (toencode != 0)
 			dest[i] |= 0x80; /* continuation bit */
 		else
 			return i + 1;
@@ -143,16 +139,16 @@ static int encode_remaining_length(uint32_t toencode, uint8_t dest[static 4]) {
 	return 4;
 }
 
-static packet_action connect_handler(const fixed_header *hdr, user_data *usr, const uint8_t *packet, int conn) {
+static pkt_action connect_handler(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn) {
 	DPRINTF("User (conn %d) sent a " MAGENTA("CONNECT") " packet\n", conn);
 
-	assert(!usr->connect_recieved);
-	assert(hdr->remaining_length >= 13);
+	assert(!usr->connected);
+	assert(pinfo->rem_len >= 13);
 
-	usr->connect_recieved = true;
+	usr->connected = true;
 
 	int connack_ret = CONNECTION_ACCEPTED;
-	const uint8_t *read_head = packet;
+	const uint8_t *read_head = pkt;
 
 	/* Figure 3.2 - Protocol Name bytes */
 	if (memcmp(MQTT_PROTO_NAME, read_head, sizeof(MQTT_PROTO_NAME))) {
@@ -182,14 +178,13 @@ static packet_action connect_handler(const fixed_header *hdr, user_data *usr, co
 	read_head += 2;
 
 	/* 10B read so far + 2B for the utf8 string header */
-	ssize_t identifier_len = validate_clientid(hdr->remaining_length - 12, read_head);
+	ssize_t identifier_len = validate_clientid(read_head, pinfo->rem_len - 12);
 
 	/* skip the 2B storing utf8 string length */
 	read_head += 2;
 
-	if (identifier_len != hdr->remaining_length - 12) {
-		dwarnx("invalid client id of length %zd (expected %u)", identifier_len,
-		       hdr->remaining_length - 12);
+	if (identifier_len != pinfo->rem_len - 12) {
+		dwarnx("invalid client id of length %zd (expected %u)", identifier_len, pinfo->rem_len - 12);
 		connack_ret = IDENTIFIER_REJECTED;
 		goto finish;
 	}
@@ -201,21 +196,7 @@ static packet_action connect_handler(const fixed_header *hdr, user_data *usr, co
 		goto finish;
 	}
 
-	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
-	if (remove_usr_by_id((char *)read_head, true, identifier_len))
-		DPRINTF("a user with matching id found - will be disconnected\n");
-
-	/* store the userid string into the new client */
-	memcpy(usr->client_id, read_head, identifier_len);
-	usr->client_id[identifier_len] = '\0';
-
-	DPRINTF(MAGENTA("CONNECT") " packet parsed " GREEN("SUCCESSFULLY") " client id is " MAGENTA("'%s'\n"),
-		usr->client_id);
-
-finish:
-	if (connack_ret == -1)
-		return CLOSE_ERR;
-
+finish:;
 	/* see Figure 3.8 - CONNACK Packet fixed header
 	 * see Figure 3.9 - CONNACK Packet variable header */
 	uint8_t buf[] = {'\x20', '\x02', '\x00', connack_ret};
@@ -227,63 +208,66 @@ finish:
 	if (connack_ret != CONNECTION_ACCEPTED)
 		return CLOSE_ERR;
 
+	/* disconnect any existing client with the same id [MQTT-3.1.4-2] */
+	user *matching = usr_by_id((char *)read_head, identifier_len);
+	if (matching != NULL) {
+		usr_free(matching);
+		DPRINTF("user with matching id disconnected\n");
+	}
+
+	/* store the userid string into the new client */
+	memcpy(usr->id, read_head, identifier_len);
+	usr->id[identifier_len] = '\0';
+
+	DPRINTF(MAGENTA("CONNECT") " packet parsed " GREEN("SUCCESSFULLY") " client id is " MAGENTA("'%s'\n"),
+		usr->id);
+
 	return KEEP;
 }
 
 /* check whether a user is subscribed to given topic */
-static bool is_subscribed(user_data *u, size_t topic_len, const uint8_t *topic) {
-	str_vec *subs = u->subscriptions;
+static bool is_subscribed(user *u, const uint8_t *topic, size_t topic_len) {
+	str_vec *subs = u->subs;
 	for (size_t i = 0; i < subs->nmemb; ++i) {
-		if (strlen(subs->arr[i]) != topic_len)
-			continue;
-		if (!memcmp(topic, subs->arr[i], topic_len))
+		/* valid topic strings don't contain '\0's so this is OK */
+		if (strmemeq(topic_len, subs->arr[i], (char *)topic))
 			return true;
 	}
 	return false;
 }
 
-static packet_action publish_handler(const fixed_header *hdr, user_data *usr, const uint8_t *packet, int conn) {
-	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PUBLISH") " packet\n", usr->client_id);
+static pkt_action publish_handler(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PUBLISH") " packet\n", usr->id);
 
-	ssize_t len = validate_topic(hdr->remaining_length, packet);
+	ssize_t len = validate_topic(pkt, pinfo->rem_len);
 	if (len == -1) {
 		dwarnx("invalid topic string");
 		return CLOSE_ERR;
 	}
 
-	uint8_t fixed_header[5] = {'\x30'};
-	int encode_ret = encode_remaining_length(hdr->remaining_length, fixed_header + 1);
-	assert(encode_ret != -1);
-
-	const int hdr_len = encode_ret + 1;
-
-	for (size_t i = 0; i < users.data->nmemb; ++i) {
-		user_data *u = &users.data->arr[i];
-		int uconn = users.conns->arr[i].fd;
-		if (is_subscribed(u, len, packet + 2)) {
-			DPRINTF("sending a " MAGENTA("PUBLISH") " packet to user " MAGENTA("'%s'\n"), u->client_id);
-
-			bool fail;
-			fail  = write(uconn, fixed_header, hdr_len) != hdr_len;
-			fail |= write(uconn, packet, hdr->remaining_length) != hdr->remaining_length;
-
-			if (fail) {
+	const int pkt_len = pinfo->hdr_len + pinfo->rem_len;
+	for (size_t i = 0; i < USERS->nmemb; ++i) {
+		user *u = &USERS->arr[i];
+		int uconn = CONNS->arr[i].fd;
+		if (uconn == -1) /* beware of invalid users */
+			continue;
+		if (is_subscribed(u, pkt + 2, len)) {
+			DPRINTF("sending a " MAGENTA("PUBLISH") " packet to user " MAGENTA("'%s'\n"), u->id);
+			if (write(uconn, SB_DATA(usr->sbuf), pkt_len) != pkt_len) {
 				dwarnx(RED("FAILED") " to properly send " MAGENTA("PUBLISH")
-				       "packet to subscriber (connection %d)", uconn);
+				       "packet to subscriber " MAGENTA("%s"), usr->id);
 			}
 		}
 	}
 
-
 	return KEEP;
 
-	(void)usr;
 	(void)conn;
 }
 
-static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
-	uint8_t remaining_length[4];
-	int encode_ret = encode_remaining_length(2 + nsubs, remaining_length); /* +2 for packet identifier */
+static void send_suback(size_t nsubs, uint16_t pkt_id, int conn) {
+	uint8_t remlen_buf[4];
+	int encode_ret = encode_remlen(2 + nsubs, remlen_buf); /* +2 for packet identifier */
 	assert(encode_ret != -1);
 
 	/* +1B initial part of the fixed header (=MQTT packet type and flags)
@@ -292,27 +276,25 @@ static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
 	 * +nsubs one byte for each subscription status code
 	 */
 	const size_t packet_size = 3 + encode_ret + nsubs;
-	uint8_t *packet = memalloc(packet_size);
+	uint8_t *pkt = xmalloc(packet_size);
 
 	/* packet type and flags; Figure 3.24 - SUBACK Packet fixed header */
-	uint8_t *write_head = packet;
+	uint8_t *write_head = pkt;
 	*write_head = 0x90;
 
 	/* remaining_length */
-	memcpy(++write_head, remaining_length, encode_ret);
+	memcpy(++write_head, remlen_buf, encode_ret);
 	write_head += encode_ret;
 
 	/* packet identifier */
-	*write_head = packet_identifier >> 8;
-	*++write_head = packet_identifier & 0xff;
+	*write_head = pkt_id >> 8;
+	*++write_head = pkt_id & 0xff;
 
 	/* suback return codes */
 	memset(++write_head, SUCCESS_QOS_0, nsubs);
 
-	ssize_t nwritten = write(conn, packet, packet_size);
-	free(packet);
-
-	return nwritten == (ssize_t)packet_size;
+	write(conn, pkt, packet_size);
+	free(pkt);
 }
 
 /*!
@@ -320,22 +302,22 @@ static bool send_suback(size_t nsubs, uint16_t packet_identifier, int conn) {
  * return its length, including the 2 length bytes and a QoS byte. If successful store a copy of it
  * in the topics vector.
  *
- * @param buf Read buffer.
+ * @param out Output param. Heap allocated copy of the topic string.
  * @param buflen Length of the buffer.
- * @param topics A vector to which to append the topic.
+ * @param buf Read buffer.
  * @param QoS Whether a QoS byte follows the string data.
  * @retval Length of the topic string, including the 2B of length and possibly a QoS byte.
+ * @returns -1 on failure
  */
-static ssize_t read_topic(size_t buflen, const uint8_t *buf, str_vec *topics[static 1], bool QoS) {
-	ssize_t string_len = validate_topic(buflen, buf);
-	/* +2 for utf8 string length bytes +1 for QoS byte */
-	const size_t topic_len = string_len + 2 + (QoS ? 1 : 0);
+static ssize_t read_topic(char **out, const uint8_t *buf, size_t buflen, bool QoS) {
+	ssize_t string_len = validate_topic(buf, buflen);
+	const size_t topic_len = string_len + 2 + !!QoS; /* 2 len bytes, 1 QoS byte */
 	if (string_len == -1 || topic_len > buflen)
 		return -1;
 
+	buf += 2; /* skip len bytes */
 	if (QoS) {
-		uint8_t QoS = *(buf + string_len + 2);
-		switch (QoS) {
+		switch (buf[string_len]) {
 		case 0:
 		case 1:
 		case 2:
@@ -346,33 +328,32 @@ static ssize_t read_topic(size_t buflen, const uint8_t *buf, str_vec *topics[sta
 		}
 	}
 
-	char *new_topic = memalloc((string_len + 1) * sizeof(char));
-
-	new_topic[string_len] = '\0';
-	memcpy(new_topic, buf + 2, string_len);
-	vec_append(topics, new_topic, NULL);
+	*out = xmalloc((string_len + 1) * sizeof(char));
+	(*out)[string_len] = '\0';
+	memcpy(*out, buf, string_len);
 
 	return topic_len;
 }
 
 /*!
  * Given a buffer of len buflen and assuming this buffer contains only topic strings, extract these
- * and return a vector filled with them
+ * and return a vector filled with them.
  *
- * @param buflen Length of the buffer.
  * @param buf The buffer.
+ * @param buflen Length of the buffer.
  * @param QoS Whether a QoS byte follows the string data.
  * @retval vector of topics as null terminated strings
  * @returns NULL on failure
  */
-static str_vec *extract_topics(size_t buflen, const uint8_t *buf, bool QoS) {
+static str_vec *extract_topics(const uint8_t *buf, size_t buflen, bool QoS) {
 	str_vec *topics;
 	vec_init(&topics, 8);
 
 	const uint8_t *read_head = buf;
 
 	while (read_head < buf + buflen) {
-		ssize_t nread = read_topic(buflen - (read_head - buf), read_head, &topics, QoS);
+		char *new_topic = NULL;
+		ssize_t nread = read_topic(&new_topic, read_head, buflen - (read_head - buf), QoS);
 		/* the MQTT spec actually requires us to gracefully reject the subscription if it is
 		 * a valid topic string containing a wildcard character, but we're too lazy to
 		 * check, so just kill em ;p */
@@ -380,6 +361,7 @@ static str_vec *extract_topics(size_t buflen, const uint8_t *buf, bool QoS) {
 			dwarnx("bad topic string");
 			goto fail;
 		}
+		vec_append(&topics, new_topic);
 		read_head += nread;
 	}
 	/* we should've read the entire buffer and nothing more at this point */
@@ -397,10 +379,10 @@ fail:
 	return NULL;
 }
 
-static packet_action subscribe_handler(const fixed_header *hdr, user_data *usr, const uint8_t *packet, int conn) {
-	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("SUBSCRIBE") " packet\n", usr->client_id);
+static pkt_action subscribe_handler(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("SUBSCRIBE") " packet\n", usr->id);
 
-	const uint8_t *read_head = packet;
+	const uint8_t *read_head = pkt;
 
 	uint16_t packet_identifier = read_BE_16b(read_head);
 	read_head += 2;
@@ -411,7 +393,7 @@ static packet_action subscribe_handler(const fixed_header *hdr, user_data *usr, 
 		return CLOSE_ERR;
 	}
 
-	str_vec *topics = extract_topics(hdr->remaining_length - 2, read_head, true);
+	str_vec *topics = extract_topics(read_head, pinfo->rem_len - 2, true);
 	if (topics == NULL) {
 		dwarnx("couldn't read topics");
 		return CLOSE_ERR;
@@ -426,15 +408,15 @@ static packet_action subscribe_handler(const fixed_header *hdr, user_data *usr, 
 
 	/* copy the subscription topics over to the user's list */
 	for (size_t i = 0; i < topics->nmemb; ++i) {
-		for (size_t j = 0; j < usr->subscriptions->nmemb; ++j) {
-			if (!strcmp(topics->arr[i], usr->subscriptions->arr[j])) {
+		for (size_t j = 0; j < usr->subs->nmemb; ++j) {
+			if (!strcmp(topics->arr[i], usr->subs->arr[j])) {
 				dwarnx("User " MAGENTA("'%s'") " trying to subscribe to an already subscribed-to topic (%s)",
-				       usr->client_id, topics->arr[i]);
+				       usr->id, topics->arr[i]);
 				free(topics->arr[i]);
 				goto next_topic;
 			}
 		}
-		vec_append(&usr->subscriptions, topics->arr[i], NULL);
+		vec_append(&usr->subs, topics->arr[i]);
 next_topic:;
 	}
 
@@ -442,19 +424,21 @@ next_topic:;
 	free(topics);
 
 	DPRINTF(MAGENTA("SUBSCRIBE") " packet parsed " GREEN("SUCCESSFULLY\n"));
-	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->client_id);
-	for (size_t i = 0; i < usr->subscriptions->nmemb; ++i)
-		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
+	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->id);
+	for (size_t i = 0; i < usr->subs->nmemb; ++i)
+		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subs->arr[i]);
 
-	return send_suback(nsubs, packet_identifier, conn) ? KEEP : CLOSE_ERR;
+	send_suback(nsubs, packet_identifier, conn);
+
+	return KEEP;
 }
 
-static packet_action unsubscribe_handler(const fixed_header *hdr, user_data *usr, const uint8_t *packet, int conn) {
-	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("UNSUBSCRIBE") " packet\n", usr->client_id);
+static pkt_action unsubscribe_handler(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("UNSUBSCRIBE") " packet\n", usr->id);
 
-	uint16_t packet_identifier = read_BE_16b(packet);
+	uint16_t pkt_id = read_BE_16b(pkt);
 
-	str_vec *unsubs = extract_topics(hdr->remaining_length - 2, packet + 2, false);
+	str_vec *unsubs = extract_topics(pkt + 2, pinfo->rem_len - 2, false);
 	if (unsubs == NULL) {
 		dwarnx("couldn't read topics");
 		return CLOSE_ERR;
@@ -468,12 +452,12 @@ static packet_action unsubscribe_handler(const fixed_header *hdr, user_data *usr
 	}
 
 	/* remove matching subscriptions */
-	str_vec *subs = usr->subscriptions;
-	for (ssize_t i = usr->subscriptions->nmemb - 1; i >= 0; --i) {
+	str_vec *subs = usr->subs;
+	for (ssize_t i = subs->nmemb - 1; i >= 0; --i) {
 		for (size_t j = 0; j < unsubs->nmemb; ++j) {
 			if (!strcmp(subs->arr[i], unsubs->arr[j])) {
 				DPRINTF("removing subscription " MAGENTA("'%s'") " for user " MAGENTA("'%s'\n"),
-					subs->arr[i], usr->client_id);
+					subs->arr[i], usr->id);
 				free(subs->arr[i]);
 				vec_remove_at(subs, i);
 				break;
@@ -485,22 +469,22 @@ static packet_action unsubscribe_handler(const fixed_header *hdr, user_data *usr
 		free(unsubs->arr[i]);
 	free(unsubs);
 
-	DPRINTF("UNSUBSCRIBE packet parsed " GREEN("SUCCESSFULLY\n"));
-	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->client_id);
-	for (size_t i = 0; i < usr->subscriptions->nmemb; ++i)
-		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subscriptions->arr[i]);
+	DPRINTF(MAGENTA("UNSUBSCRIBE") " packet parsed " GREEN("SUCCESSFULLY\n"));
+	DPRINTF("subscriptions for user " MAGENTA("'%s':\n"), usr->id);
+	for (size_t i = 0; i < usr->subs->nmemb; ++i)
+		DPRINTF("    topic: " MAGENTA("'%s'\n"), usr->subs->arr[i]);
 
 	/* Figure 3.31 - UNSUBACK Packet fixed header
 	 * Figure 3.32 - UNSUBACK Packet variable header
 	 */
-	const uint8_t response[] = {'\xb0', '\x02', packet_identifier >> 8, packet_identifier & 0xff};
+	const uint8_t response[] = {'\xb0', '\x02', pkt_id >> 8, pkt_id & 0xff};
 	write(conn, response, sizeof(response));
 
 	return KEEP;
 }
 
-static packet_action pingreq_handler(const fixed_header *hdr, user_data *usr, const uint8_t *packet, int conn) {
-	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PING") " packet; PONG!\n", usr->client_id);
+static pkt_action pingreq_handler(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("PING") " packet; " MAGENTA("PONG!\n"), usr->id);
 
 	/* send PINGRESP */
 	const uint8_t response[] = {'\xd0', '\x00'};
@@ -508,20 +492,20 @@ static packet_action pingreq_handler(const fixed_header *hdr, user_data *usr, co
 
 	return KEEP;
 
-	(void)hdr;
+	(void)pinfo;
 	(void)usr;
-	(void)packet;
+	(void)pkt;
 }
 
-static packet_action disconnect_handler(const fixed_header *hdr, user_data *usr, const uint8_t *packet, int conn) {
-	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("DISCONNECT") " packet\n", usr->client_id);
+static pkt_action disconnect_handler(const pkt_info *pinfo, user *usr, const uint8_t *pkt, int conn) {
+	DPRINTF("User " MAGENTA("'%s'") " sent a " MAGENTA("DISCONNECT") " packet\n", usr->id);
 
 	return CLOSE_OK;
 
-	(void)hdr;
+	(void)pinfo;
 	(void)usr;
+	(void)pkt;
 	(void)conn;
-	(void)packet;
 }
 
 /*!
@@ -530,29 +514,29 @@ static packet_action disconnect_handler(const fixed_header *hdr, user_data *usr,
  * @retval handler function applicable to given packet type
  * @returns NULL if the fixed header has an invalid format
  */
-static packet_handler verify_fixed_header(const fixed_header *hdr, const user_data *usr) {
-	if (hdr->remaining_length < 0) {
+static pkt_handler verify_fixed_header(const pkt_info *pinfo, const user *usr) {
+	if (pinfo->rem_len < 0) {
 		dwarnx("invalid remaining length field");
 		return NULL;
 	}
 
-	if (hdr->remaining_length > MESSAGE_MAX_LEN) {
+	if (pinfo->rem_len > MESSAGE_MAX_LEN) {
 		dwarnx("Message too large (max: %d, message is: %d)", MESSAGE_MAX_LEN,
-		       hdr->remaining_length);
+		       pinfo->rem_len);
 		return NULL;
 	}
 
-	switch (hdr->packet_type) {
+	switch (pinfo->pkt_type) {
 	case CONNECT:
 		/* 10B variable header - Figure 3.6 - Variable header
 		 * + client id which has 2B length prefix and contains at least one character
 		 * [MQTT-3.1.3-5]
 		 */
-		if (hdr->flags == CONNECT_DEF_FLAGS && hdr->remaining_length >= 13 && !usr->connect_recieved)
+		if (pinfo->flags == CONNECT_DEF_FLAGS && pinfo->rem_len >= 13 && !usr->connected)
 			return connect_handler;
-		if (usr->connect_recieved)
+		if (usr->connected)
 			dwarnx("User " MAGENTA("%s") " sent a second " MAGENTA("CONNECT") " packet",
-			       usr->client_id);
+			       usr->id);
 		break;
 	case PUBLISH:
 		/* DUP (bit 3) is always zero in this implementation [MQTT-3.3.1-2]
@@ -563,10 +547,10 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 * of the topic string which is at least 1B [MQTT-4.7.3-1]. No payload has to be
 		 * present.
 		 */
-		if (!(hdr->flags & 0x0e) && hdr->remaining_length >= 3 && usr->connect_recieved)
+		if (!(pinfo->flags & 0x0e) && pinfo->rem_len >= 3 && usr->connected)
 			return publish_handler;
 
-		dwarnx(MAGENTA("PUBLISH") " requested QoS: %d", (hdr->flags >> 1) & 0x03);
+		dwarnx(MAGENTA("PUBLISH") " requested QoS: %d", (pinfo->flags >> 1) & 0x03);
 		break;
 	case SUBSCRIBE:
 		/* flags: see Figure 3.20 - SUBSCRIBE Packet fixed header
@@ -575,7 +559,7 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 * contains at least one topic filter [MQTT-3.8.3-3] which is a utf8 string, at
 		 * least one character long [MQTT-4.7.3-1] + a QoS byte; in total 6B or more
 		 */
-		if (hdr->flags == SUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 6 && usr->connect_recieved)
+		if (pinfo->flags == SUBSCRIBE_DEF_FLAGS && pinfo->rem_len >= 6 && usr->connected)
 			return subscribe_handler;
 		break;
 	case UNSUBSCRIBE:
@@ -583,18 +567,17 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 		 *
 		 * length: packet identifier (2B), at least one topic filter (3B)
 		 */
-		if (hdr->flags == UNSUBSCRIBE_DEF_FLAGS && hdr->remaining_length >= 5 && usr->connect_recieved)
+		if (pinfo->flags == UNSUBSCRIBE_DEF_FLAGS && pinfo->rem_len >= 5 && usr->connected)
 			return unsubscribe_handler;
 		break;
 	case PINGREQ:
 		/* see Figure 3.33 - PINGREQ Packet fixed header */
-		if (hdr->flags == PINGREQ_DEF_FLAGS && hdr->remaining_length == 0 && usr->connect_recieved)
+		if (pinfo->flags == PINGREQ_DEF_FLAGS && pinfo->rem_len == 0 && usr->connected)
 			return pingreq_handler;
 		break;
 	case DISCONNECT:
 		/* see Figure 3.35 - DISCONNECT Packet fixed header */
-		if (hdr->flags == DISCONNECT_DEF_FLAGS && hdr->remaining_length == 0
-		    && usr->connect_recieved)
+		if (pinfo->flags == DISCONNECT_DEF_FLAGS && pinfo->rem_len == 0 && usr->connected)
 			return disconnect_handler;
 		break;
 	}
@@ -602,14 +585,10 @@ static packet_handler verify_fixed_header(const fixed_header *hdr, const user_da
 	return NULL;
 }
 
-packet_action process_packet(int conn, user_data *usr) {
-	static const size_t MIN_LOAD = 1024;
-
+pkt_action process_pkt(int conn, user *usr) {
 	/* attempt to avoid unnecessary reallocation of the streambuf */
 	size_t to_load = MAX(SB_FREE(usr->sbuf), MIN_LOAD);
 	switch (sbuf_load(&usr->sbuf, conn, to_load)) {
-	case SBUF_ENOMEM:
-		derr(NO_MEMORY, "failed allocating storage for packet buffer");
 	case -1:
 		if (errno == EAGAIN || errno == EWOULDBLOCK)
 			return KEEP;
@@ -627,17 +606,16 @@ packet_action process_packet(int conn, user_data *usr) {
 	/* we need at least 2B to have something to work with
 	 * first is the flags and such, second is the beggining of packet len */
 	while (SB_DATASIZE(usr->sbuf) >= 2) {
-		size_t header_nbytes;
-		int32_t remaining_length = decode_remaining_length(
-			SB_DATA(usr->sbuf) + 1, SB_DATASIZE(usr->sbuf) - 1, &header_nbytes);
-		++header_nbytes; /* +1 for fixed header */
-		const size_t message_size = remaining_length + header_nbytes;
+		size_t hdr_bytes;
+		int32_t rlen = decode_remlen(SB_DATA(usr->sbuf) + 1, SB_DATASIZE(usr->sbuf) - 1, &hdr_bytes);
+		++hdr_bytes; /* +1 for fixed header */
+		const size_t message_size = rlen + hdr_bytes;
 
-		switch (remaining_length) {
-		case -2:
+		switch (rlen) {
+		case REMLEN_INCOMPLETE:
 			DPRINTF("not enough data in buffer to determine packet length\n");
 			return KEEP;
-		case -1:
+		case REMLEN_INVALID:
 			dwarnx("invalid remaining length field");
 			return CLOSE_ERR;
 		default:
@@ -649,23 +627,24 @@ packet_action process_packet(int conn, user_data *usr) {
 		}
 
 		uint8_t initial = *SB_DATA(usr->sbuf);
-		fixed_header hdr = {
-			.packet_type = (initial & 0xf0) >> 4,
+		pkt_info pinfo = {
+			.pkt_type = (initial & 0xf0) >> 4,
 			.flags = initial & 0x0f,
-			.remaining_length = remaining_length,
+			.hdr_len = hdr_bytes,
+			.rem_len = rlen,
 		};
 
-		DPRINTF("packet info: type: %d, flags: %d, length: %u\n", hdr.packet_type,
-			hdr.flags, hdr.remaining_length);
+		DPRINTF("packet info: type: %d, flags: %d, length: %u\n", pinfo.pkt_type,
+			pinfo.flags, pinfo.rem_len);
 
-		packet_handler handler = verify_fixed_header(&hdr, usr);
+		pkt_handler handler = verify_fixed_header(&pinfo, usr);
 		if (handler == NULL) {
 			dwarnx("invalid fixed header");
 			return CLOSE_ERR;
 		}
 
-		uint8_t *packet_data = SB_DATA(usr->sbuf) + header_nbytes;
-		switch (handler(&hdr, usr, packet_data, conn)) {
+		uint8_t *pkt = SB_DATA(usr->sbuf) + hdr_bytes;
+		switch (handler(&pinfo, usr, pkt, conn)) {
 		case CLOSE_ERR:
 			dwarnx(RED("CLOSING") " connection %d due to a malformed packet", conn);
 			return CLOSE_ERR;
